@@ -29,8 +29,12 @@ else:
 # Initialize client
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-# Upload folder
-UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+# Upload folder (Vercel uses /tmp as its only writable scratch space)
+if os.environ.get('VERCEL'):
+    UPLOAD_FOLDER = '/tmp/uploads'
+else:
+    UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # ============================================================================
