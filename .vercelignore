@@ -1,0 +1,10 @@
+# Don't upload these to Vercel
+venv/
+__pycache__/
+*.pyc
+.env
+.git/
+uploads/
+datasets/
+*.md
+!README.md
