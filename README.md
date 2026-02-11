@@ -1,113 +1,63 @@
-# Customer Convey Condense 🎯
+# Briefly | Intelligent Signal Processing 🎯
 
-**AI-powered customer communication summarizer. Works locally AND on Vercel. 100% FREE.**
+**Intelligent Conversation Processing: Convert complex voice and chat signals into one-line intelligence.**
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/yourusername/customer-convey-condense)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/prathamamritkar/customer-convey-condense)
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Milestone 1: Setup & Transcription)
 
-### Local (Heavy Models - Offline)
+### Local Node Initialization
 ```bash
-# Install
+# Install dependencies
 pip install -r requirements.txt
 
-# Run
+# Start Signal Hub
 python app.py
 
-# Open http://localhost:5000
+# Access Interface
+# http://localhost:5000
 ```
 
-### Vercel (Cloud APIs - Online)
-```bash
-# Install Vercel CLI
-npm i -g vercel
+### Vercel Cloud Deployment
+1. **Push to GitHub**: Connect your repository to Vercel.
+2. **Configure Environment**: 
+   - Go to **Project Settings > Environment Variables** in the Vercel Dashboard.
+   - Add `GROQ_API_KEY`: [Your Groq API Key]
+3. **Deploy**: Trigger a new deployment.
 
-# Deploy
-vercel
+## 🛠️ Performance Architecture
 
-# Add secrets
-vercel env add DEEPGRAM_API_KEY
-vercel env add GROQ_API_KEY
-```
+| Objective | Logic | Model |
+|-----------|-------|-------|
+| **Signal Decoding** | Voice to Text (STT) | Whisper-Large-V3 (via Groq) |
+| **Logic Distillation**| Summarization | Llama-3.3-70B (via Groq) |
 
-## 💰 Cost: $0.00/month
+## 🧬 Core Logic (Milestone 1)
 
-| Mode | STT | Summarization | Cost |
-|------|-----|---------------|------|
-| **Local** | Whisper (offline) | BART (offline) | FREE |
-| **Vercel** | Deepgram API | Groq API | FREE |
+1. **Process Chats**: Directly ingest raw interaction logs or text.
+2. **Convert Calls (STT)**: Decodes multi-format audio (.mp3, .wav, .m4a) into clean text streams.
+3. **Summarization**: Generates a precise, one-line intelligence report from the provided data.
+4. **Archive**: Persistent local storage for session-based history tracking.
 
-## 🎯 Features
-
-- ✅ Transcribe audio calls (MP3, WAV, M4A)
-- ✅ Summarize chat conversations
-- ✅ Beautiful dark UI with glassmorphism
-- ✅ History tracking (localStorage)
-- ✅ Drag & drop file upload
-- ✅ Works offline (local mode)
-- ✅ Deploy to Vercel in 1 click
-
-## 📁 Structure
+## 📁 Repository Structure
 
 ```
-app.py          # Smart routing: local models OR cloud APIs
-index.html      # Frontend UI
-style.css       # Premium dark theme
-script.js       # Frontend logic
-vercel.json     # Vercel config
+app.py          # Backend Signal Node (Flask)
+index.html      # Briefly Frontend UI
+style.css       # Design System (8px Grid / M3 Logic)
+script.js       # Orchestration & Logic
+vercel.json     # Deployment Manifest
 ```
 
-## 🔑 API Keys (FREE)
+## 🔐 Configuration (Strict Mode)
 
-### Deepgram (Speech-to-Text)
-1. Sign up: https://deepgram.com
-2. Get API key (FREE tier: 45,000 minutes/year)
-3. Already provided: `4628aa09105589ba57d6f9d84e0c4b7189d02df6`
+This platform requires a **Groq API Key** for operation. 
+1. Obtain a key at [console.groq.com](https://console.groq.com).
+2. For local use: Create a `.env` file with `GROQ_API_KEY=your_key`.
+3. For Cloud: Set the environment variable in your Vercel/Hosting dashboard.
 
-### Groq (Summarization)
-1. Sign up: https://console.groq.com
-2. Get API key (FREE tier: unlimited)
-3. Add to `.env`: `GROQ_API_KEY=your_key_here`
-
-## 🛠️ How It Works
-
-### Local Mode
-```
-Audio → Whisper (local) → Text → BART (local) → Summary
-```
-
-### Vercel Mode
-```
-Audio → Deepgram API → Text → Groq API → Summary
-```
-
-**Smart routing**: Automatically uses local models if available, falls back to cloud APIs.
-
-## 📊 API Endpoints
-
-```bash
-POST /api/process-chat
-POST /api/process-call
-GET  /api/health
-```
-
-## 🎨 UI
-
-- Dark theme with purple/blue gradients
-- Glassmorphism effects
-- Smooth animations
-- Fully responsive
-- Drag & drop support
-
-## 🔒 Privacy
-
-- **Local mode**: 100% offline, data never leaves your machine
-- **Vercel mode**: Uses cloud APIs (Deepgram, Groq)
+**Note**: Internal fallbacks (mock data) are disabled to ensure production-grade data integrity.
 
 ## 📝 License
 
-MIT
-
----
-
-**Built for hackathons. Ships fast. Works everywhere.**
+MIT | **Briefly: Distilling Clarity from Noise.**
