@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 from datetime import datetime
 from werkzeug.utils import secure_filename
 from groq import Groq
+from deepgram import DeepgramClient
+from elevenlabs.client import ElevenLabs
 import json
 
 # Load environment variables
@@ -22,12 +24,21 @@ app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 
 if not GROQ_API_KEY:
-    print("⚠️  WARNING: API_KEY not set in .env")
+    print("⚠️  WARNING: GROQ_API_KEY not set. Primary engine offline.")
 else:
-    print("✅ Configuration loaded")
+    print("✅ Groq Engine: Ready")
 
-# Initialize client
+# Initialize clients
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
+DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY', '')
+deepgram_client = DeepgramClient(api_key=DEEPGRAM_API_KEY) if DEEPGRAM_API_KEY else None
+
+ELEVENLABS_API_KEY = os.getenv('ELEVENLABS_API_KEY', '')
+elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY) if ELEVENLABS_API_KEY else None
+
+MURF_API_KEY = os.getenv('MURF_API_KEY', '')
+# Murf is primarily TTS, keeping it ready for future voice conveyance if needed
 
 # Upload folder (Vercel uses /tmp as its only writable scratch space)
 if os.environ.get('VERCEL'):
@@ -42,50 +53,175 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # ============================================================================
 
 def perform_voice_capture(audio_path):
-    """Voice-to-text conversion via API"""
-    if not groq_client:
-        raise Exception("Transcription engine not configured.")
+    """Voice-to-text conversion via API with multi-provider fallback and speaker diarization"""
     
-    with open(audio_path, "rb") as file:
-        transcription = groq_client.audio.transcriptions.create(
-            file=(audio_path, file.read()),
-            model="whisper-large-v3",
-            response_format="text",
-            language="en",
-            temperature=0.0
-        )
+    # attempt 1: ElevenLabs Scribe - PRIMARY (best quality, speaker diarization)
+    if elevenlabs_client:
+        try:
+            print("--- Attempting ElevenLabs Scribe Transcription ---")
+            with open(audio_path, "rb") as audio_file:
+                # Use ElevenLabs Scribe for transcription
+                response = elevenlabs_client.scribe.transcribe(
+                    audio=audio_file,
+                    model="scribe_v2",
+                    language="en",
+                    diarize=True,  # Enable speaker diarization
+                )
+                
+                # Format response with speaker labels if available
+                if hasattr(response, 'segments') and response.segments:
+                    formatted_transcript = []
+                    for segment in response.segments:
+                        speaker = f"Speaker {segment.speaker}" if hasattr(segment, 'speaker') else "Speaker"
+                        text = segment.text if hasattr(segment, 'text') else str(segment)
+                        formatted_transcript.append(f"{speaker}: {text}")
+                    
+                    if formatted_transcript:
+                        return "\n\n".join(formatted_transcript)
+                
+                # Fallback to plain text if available
+                if hasattr(response, 'text'):
+                    return response.text
+                return str(response)
+                
+        except Exception as e:
+            print(f"⚠️ ElevenLabs Transcription Failed: {e}")
     
-    return transcription
+    # attempt 2: Deepgram (Nova-2) with speaker diarization - FALLBACK
+    if deepgram_client:
+        try:
+            print("--- Attempting Deepgram Transcription with Diarization (Fallback) ---")
+            with open(audio_path, "rb") as file:
+                buffer_data = file.read()
+            
+            # v3 SDK (5.x) with diarization enabled
+            response = deepgram_client.listen.v1.media.transcribe_file(
+                request=buffer_data,
+                model="nova-2",
+                smart_format=True,
+                diarize=True,  # Enable speaker diarization
+                punctuate=True,
+                utterances=True,  # Get speaker-separated utterances
+            )
+            
+            # Format transcription with speaker labels
+            if hasattr(response, 'results') and response.results.channels:
+                channel = response.results.channels[0]
+                
+                # Check if we have utterances (speaker-separated segments)
+                if hasattr(response.results, 'utterances') and response.results.utterances:
+                    formatted_transcript = []
+                    for utterance in response.results.utterances:
+                        speaker = f"Speaker {utterance.speaker}"
+                        text = utterance.transcript
+                        formatted_transcript.append(f"{speaker}: {text}")
+                    
+                    if formatted_transcript:
+                        return "\n\n".join(formatted_transcript)
+                
+                # Fallback to regular transcript if no utterances
+                if channel.alternatives:
+                    return channel.alternatives[0].transcript
+                    
+        except Exception as e:
+            print(f"⚠️ Deepgram Transcription Failed: {e}")
+
+    # attempt 3: Groq (Whisper-large-v3) - FINAL FALLBACK (no diarization support)
+    if groq_client:
+        try:
+            print("--- Attempting Groq Transcription (Final Fallback) ---")
+            with open(audio_path, "rb") as file:
+                # Try verbose_json format to get word-level timestamps
+                transcription = groq_client.audio.transcriptions.create(
+                    file=(audio_path, file.read()),
+                    model="whisper-large-v3",
+                    response_format="verbose_json",
+                    language="en",
+                    temperature=0.0
+                )
+            
+            # Groq returns verbose JSON with segments
+            if hasattr(transcription, 'text'):
+                return transcription.text
+            return str(transcription)
+        except Exception as e:
+            print(f"⚠️ Groq Transcription Failed: {e}")
+
+    raise Exception("All transcription engines failed or are not configured.")
 
 def generate_insight(text, content_type="interaction"):
-    """Generate concise insight distillation"""
-    if not groq_client:
-        raise Exception("Distillation engine not strictly configured. Core services unavailable.")
+    """Generate concise insight distillation with fallback to Deepgram"""
     
-    prompt = f"""You are a customer service analyst. Provide a concise one-line summary of this {content_type}.
+    # attempt 1: Groq (Llama-3.3-70b-versatile)
+    if groq_client:
+        try:
+            print(f"--- Attempting Groq Insight Generation ({content_type}) ---")
+            prompt = f"""You are a customer service analyst. Provide a concise one-line summary of this {content_type}.
 Focus on the main topic, customer concern, or outcome.
 
 {content_type.capitalize()}: {text[:4000]}
 
 One-line summary:"""
-    
-    chat_completion = groq_client.chat.completions.create(
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a helpful assistant that creates concise one-line summaries of customer interactions."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-        model="llama-3.3-70b-versatile",
-        temperature=0.7,
-        max_tokens=100,
-    )
-    
-    return chat_completion.choices[0].message.content.strip()
+            
+            chat_completion = groq_client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant that creates concise one-line summaries of customer interactions."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                model="llama-3.3-70b-versatile",
+                temperature=0.7,
+                max_tokens=100,
+            )
+            return chat_completion.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"⚠️ Groq Insight Generation Failed: {e}")
+
+    # attempt 2: Deepgram (Text Intelligence Summarization)
+    if deepgram_client:
+        try:
+            print("--- Attempting Deepgram Insight Generation (Fallback) ---")
+            
+            # Deepgram often returns the original text if it's very short.
+            # We can handle very short text ourselves to save latency/quota.
+            if len(text.split()) < 10:
+                print("Text too short for summarization, returning as is.")
+                return text.strip()
+
+            # v3 SDK (5.x) usage for Text Intelligence
+            response = deepgram_client.read.v1.text.analyze(
+                request={'buffer': text},
+                summarize=True,
+                language="en",
+            )
+            
+            # Robust extraction based on Deepgram Python SDK v3+ structure
+            if hasattr(response, 'results'):
+                results = response.results
+                # Check for direct summary property (Text Intelligence)
+                if hasattr(results, 'summary') and results.summary:
+                    return results.summary
+                # Check for nested channel-based summary (alternatives)
+                if hasattr(results, 'channels') and results.channels:
+                    alt = results.channels[0].alternatives[0]
+                    if hasattr(alt, 'summaries') and alt.summaries:
+                        return alt.summaries[0].summary
+                    if hasattr(alt, 'summary') and alt.summary:
+                        return alt.summary
+
+            # Fallback if we got a response but couldn't parse it
+            if str(response):
+                print(f"Deepgram response received but not parsed: {response}")
+                
+        except Exception as e:
+            print(f"⚠️ Deepgram Insight Generation Failed: {e}")
+
+    raise Exception("All distillation engines failed or are not configured.")
 
 # ============================================================================
 # FILE PARSING
@@ -235,8 +371,41 @@ def health():
     """Health check endpoint"""
     return jsonify({
         'status': 'operational',
-        'api_ready': bool(GROQ_API_KEY)
+        'transcription': {
+            'primary': 'elevenlabs' if ELEVENLABS_API_KEY else 'deepgram' if DEEPGRAM_API_KEY else 'groq' if GROQ_API_KEY else None,
+            'diarization': bool(ELEVENLABS_API_KEY or DEEPGRAM_API_KEY),
+            'fallback_chain': [
+                provider for provider in ['elevenlabs', 'deepgram', 'groq']
+                if (provider == 'elevenlabs' and ELEVENLABS_API_KEY) or
+                   (provider == 'deepgram' and DEEPGRAM_API_KEY) or
+                   (provider == 'groq' and GROQ_API_KEY)
+            ]
+        },
+        'summarization': {
+            'primary': 'groq' if GROQ_API_KEY else 'deepgram' if DEEPGRAM_API_KEY else None,
+            'fallback': 'deepgram' if GROQ_API_KEY and DEEPGRAM_API_KEY else None
+        },
+        'api_ready': bool(ELEVENLABS_API_KEY or DEEPGRAM_API_KEY or GROQ_API_KEY),
+        'fallbacks': {
+            'elevenlabs': bool(ELEVENLABS_API_KEY),
+            'deepgram': bool(DEEPGRAM_API_KEY),
+            'groq': bool(GROQ_API_KEY),
+            'murf': bool(MURF_API_KEY)
+        }
     })
+
+@app.route('/api/elevenlabs-token', methods=['GET'])
+def get_elevenlabs_token():
+    """Generate single-use token for ElevenLabs client-side SDK"""
+    if not elevenlabs_client:
+        return jsonify({'error': 'ElevenLabs not configured'}), 503
+    
+    try:
+        # Generate single-use token for realtime scribe (expires in 15 minutes)
+        token = elevenlabs_client.tokens.single_use.create("realtime_scribe")
+        return jsonify(token)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/', methods=['GET'])
 def index():
@@ -262,12 +431,31 @@ if __name__ == '__main__':
     print("🚀 Briefly Signal Hub")
     print("="*60)
     print("✓ Backend System: Signal Node Operational")
-    print("✓ Deployment Support: Transcription Enabled")
     
-    if not GROQ_API_KEY:
-        print("\n⚠️  API Key required for operation")
+    # Build transcription chain message
+    transcription_chain = []
+    if ELEVENLABS_API_KEY:
+        transcription_chain.append("ElevenLabs Scribe")
+    if DEEPGRAM_API_KEY:
+        transcription_chain.append("Deepgram")
+    if GROQ_API_KEY:
+        transcription_chain.append("Groq")
+    
+    if transcription_chain:
+        print(f"✓ Transcription Support: {' → '.join(transcription_chain)} (w/ Speaker Diarization)")
     else:
-        print("\n✅ System ready")
+        print("✗ Transcription Support: No providers configured")
+    
+    print("✓ Distillation Support: enabled (Groq + Deepgram fallback)")
+    
+    if not ELEVENLABS_API_KEY and not DEEPGRAM_API_KEY and not GROQ_API_KEY:
+        print("\n❌ CRITICAL: No transcription providers configured.")
+    elif ELEVENLABS_API_KEY:
+        print("\n✅ All systems ready (ElevenLabs Scribe primary - Premium quality)")
+    elif DEEPGRAM_API_KEY:
+        print("\n✅ Systems ready (Deepgram primary - Speaker diarization enabled)")
+    else:
+        print("\n⚠️  Running in Basic Mode (Groq only - no speaker diarization)")
     
     print("="*60 + "\n")
     

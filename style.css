@@ -400,6 +400,36 @@ body {
     border-color: var(--md-sys-color-primary);
 }
 
+.btn-outline:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+.btn-secondary {
+    width: 100%;
+    padding: var(--s4);
+    border: 1px solid var(--md-sys-color-outline);
+    border-radius: var(--md-sys-shape-corner-full);
+    background: var(--md-sys-color-surface);
+    color: var(--md-sys-color-on-surface);
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s2);
+    transition: all 0.2s;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: var(--md-sys-color-surface-variant);
+    border-color: var(--md-sys-color-on-surface-variant);
+}
+
+.btn-secondary:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
 /* Results Display */
 .result-container {
     padding: var(--s6);

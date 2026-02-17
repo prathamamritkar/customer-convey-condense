@@ -12,7 +12,13 @@ const API_BASE_URL = window.location.hostname === 'localhost'
 // ── Defensive Persistence ────────────────────────────────────────────────
 let savedHistory = [];
 try {
-    const raw = localStorage.getItem('ccc_history');
+    // Attempt migration from legacy key if new key doesn't exist
+    let raw = localStorage.getItem('briefly_history');
+    if (!raw) {
+        raw = localStorage.getItem('ccc_history');
+        if (raw) localStorage.setItem('briefly_history', raw);
+    }
+
     if (raw) savedHistory = JSON.parse(raw);
     if (!Array.isArray(savedHistory)) savedHistory = [];
 } catch (e) {
@@ -367,7 +373,7 @@ function archiveDistillation(data) {
         timestamp: data.timestamp || new Date().toISOString(),
     });
     if (AppState.history.length > 50) AppState.history = AppState.history.slice(0, 50);
-    localStorage.setItem('ccc_history', JSON.stringify(AppState.history));
+    localStorage.setItem('briefly_history', JSON.stringify(AppState.history));
 }
 
 function renderArchive() {
@@ -443,7 +449,15 @@ async function verifyConnection() {
         const res = await fetch(`${API_BASE_URL}/health`);
         const data = await res.json();
         UI.infoBar.classList.remove('status-offline');
-        $('#status-text').textContent = data.api_ready ? 'Briefly Node: Active' : 'API Node: Restricted';
+
+        const statusText = $('#status-text');
+        if (data.api_ready) {
+            statusText.textContent = 'Briefly Node: Active';
+        } else if (data.fallbacks && data.fallbacks.deepgram) {
+            statusText.textContent = 'Briefly Node: Fallback Mode';
+        } else {
+            statusText.textContent = 'API Node: Restricted';
+        }
     } catch {
         UI.infoBar.classList.add('status-offline');
         $('#status-text').textContent = 'Global Node: Offline';
