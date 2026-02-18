@@ -271,7 +271,7 @@ def process_chat():
             'type': 'chat',
             'original_text': chat_text,
             'summary': summary,
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
         })
     
     except Exception as e:
@@ -317,7 +317,7 @@ def process_file():
             'type': 'chat',
             'original_text': text,
             'summary': summary,
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
         })
     
     except Exception as e:
@@ -360,7 +360,7 @@ def process_call():
             'type': 'call',
             'transcription': transcription,
             'summary': summary,
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
         })
     
     except Exception as e:
