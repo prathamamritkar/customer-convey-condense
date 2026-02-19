@@ -47,7 +47,7 @@
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                     </svg>
-                    <span>Clarity Engine</span>
+                    <span>Text Engine</span>
                 </button>
                 <button class="nav-tab" role="tab" aria-selected="false" data-tab="call" id="tab-call"
                     aria-controls="panel-call">
@@ -72,7 +72,7 @@
             <!-- Intelligence Input: Analysis -->
             <section class="content-panel active" id="panel-chat" role="tabpanel">
                 <div class="input-field-group">
-                    <label class="field-label" for="chat-file-input">Knowledge Source (.pdf, .txt, .md, .json)</label>
+                    <label class="field-label" for="chat-file-input">Raw Source (.pdf, .txt, .md, .json)</label>
                     <input type="file" id="chat-file-input" accept=".txt,.csv,.json,.md,.log,.pdf" hidden>
 
                     <div class="upload-dropzone" id="chat-dropzone" tabindex="0" role="button"
@@ -83,7 +83,8 @@
                             <polyline points="17 8 12 3 7 8" />
                             <line x1="12" y1="3" x2="12" y2="15" />
                         </svg>
-                        <p class="dropzone-text">Drop raw data or <span class="highlight">browse source</span></p>
+                        <p class="dropzone-text">Drop raw data or <span class="highlight">browse
+                                source</span></p>
                     </div>
 
                     <div class="file-chip" id="chat-file-chip" hidden>
@@ -94,9 +95,9 @@
                 </div>
 
                 <div class="input-field-group">
-                    <label class="field-label" for="chat-input">Raw Conversation Stream / Notes</label>
+
                     <textarea id="chat-input" class="modern-textarea"
-                        placeholder="Paste raw text or interaction logs here..." rows="5"></textarea>
+                        placeholder="Paste raw text or interaction logs here..." rows="1"></textarea>
                 </div>
 
                 <button class="btn-primary" id="process-chat-btn" type="button">
@@ -198,7 +199,7 @@
         </main>
 
         <footer class="app-tagline app-footer">
-            &copy; 2026 Briefly. Intelligent Signal Processing.
+            &copy; 2026 Briefly &nbsp;&middot;&nbsp; Pratham Amritkar
         </footer>
     </div>
 

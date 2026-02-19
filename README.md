@@ -54,7 +54,7 @@ Speaker 1: I'm having trouble with my account login.
 Speaker 0: I understand. Let me help you reset that right away.
 ```
 
-### 2. Clarity Engine (Text Summarization)
+### 2. Text Engine (Text Summarization)
 - **Document Upload**: Process PDF, TXT, JSON, Markdown files
 - **Direct Input**: Paste text for instant summarization
 - **Smart Analysis**: Extracts core meaning and intent
@@ -172,7 +172,7 @@ The application uses multiple AI providers for redundancy and optimal quality. Y
 
 ### Processing Text Documents
 
-1. **Navigate to "Clarity Engine" Tab**
+1. **Navigate to "Text Engine" Tab**
 2. **Choose Input Method**:
    - Upload a document (PDF, TXT, JSON, MD), OR
    - Paste text directly into the text area

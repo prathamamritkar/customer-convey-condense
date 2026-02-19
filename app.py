@@ -18,7 +18,7 @@ app = Flask(__name__, static_folder=BASE_DIR)
 CORS(app)
 
 # Security: Limit upload size to 25MB
-app.config['MAX_CONTENT_LENGTH'] = 25 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 # API Configuration
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
@@ -156,29 +156,88 @@ def generate_insight(text, content_type="interaction"):
     if groq_client:
         try:
             print(f"--- Attempting Groq Insight Generation ({content_type}) ---")
-            prompt = f"""You are a customer service analyst. Provide a concise one-line summary of this {content_type}.
+            
+            # Model Constants
+            MODEL_ID = "llama-3.3-70b-versatile"
+            # Safe character limit (~25k tokens) to leave room for response and prompt
+            # Llama 3.3 has 128k context, so we can be generous, but let's be safe with 100k chars per chunk
+            CHUNK_SIZE = 100000 
+            
+            def get_groq_completion(input_text):
+                prompt = f"""You are a customer service analyst. Provide a concise one-line summary of this {content_type}.
 Focus on the main topic, customer concern, or outcome.
 
-{content_type.capitalize()}: {text[:4000]}
+{content_type.capitalize()}: {input_text}
 
 One-line summary:"""
+                
+                chat_completion = groq_client.chat.completions.create(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a helpful assistant that creates concise one-line summaries of customer interactions."
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    model=MODEL_ID,
+                    temperature=0.7,
+                    max_tokens=150,
+                )
+                return chat_completion.choices[0].message.content.strip()
+
+            # Logic: If text is within limit, process directly.
+            # If text > limit, chunk it -> summarize chunks -> summarize the summaries.
             
-            chat_completion = groq_client.chat.completions.create(
+            if len(text) <= CHUNK_SIZE:
+                return get_groq_completion(text)
+            
+            print(f"Input text length ({len(text)}) exceeds chunk limit ({CHUNK_SIZE}). Initiating chunked processing...")
+            
+            # Simple character-based chunking (could be improved with token-aware splitting)
+            chunks = [text[i:i + CHUNK_SIZE] for i in range(0, len(text), CHUNK_SIZE)]
+            chunk_summaries = []
+            
+            for i, chunk in enumerate(chunks):
+                print(f"Processing chunk {i+1}/{len(chunks)}...")
+                try:
+                    summary = get_groq_completion(chunk)
+                    chunk_summaries.append(summary)
+                except Exception as e:
+                    print(f"Error processing chunk {i+1}: {e}")
+                    chunk_summaries.append("[Chunk processing failed]")
+            
+            # Consolidate summaries
+            combined_summary_text = "\n".join(chunk_summaries)
+            print("Generating final consolidated summary...")
+            
+            final_prompt = f"""You are a lead analyst. Below are summaries of different parts of a long {content_type}.
+Synthesize them into a single, cohesive one-line summary that captures the overall essence.
+
+Partial Summaries:
+{combined_summary_text}
+
+Final One-line summary:"""
+
+            final_completion = groq_client.chat.completions.create(
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a helpful assistant that creates concise one-line summaries of customer interactions."
+                        "content": "You are a helpful assistant that consolidates multiple summaries into one concise insight."
                     },
                     {
                         "role": "user",
-                        "content": prompt
+                        "content": final_prompt
                     }
                 ],
-                model="llama-3.3-70b-versatile",
+                model=MODEL_ID,
                 temperature=0.7,
-                max_tokens=100,
+                max_tokens=200,
             )
-            return chat_completion.choices[0].message.content.strip()
+            return final_completion.choices[0].message.content.strip()
+
         except Exception as e:
             print(f"⚠️ Groq Insight Generation Failed: {e}")
 

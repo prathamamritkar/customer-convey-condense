@@ -1,7 +1,8 @@
-flask==3.0.0
-flask-cors==4.0.0
-python-dotenv==1.0.0
-groq>=0.9.0
-PyPDF2>=3.0.0
-deepgram-sdk>=3.0.0
-elevenlabs>=1.0.0
+Flask==3.1.3
+flask-cors==6.0.2
+python-dotenv==1.2.1
+groq==1.0.0
+PyPDF2==3.0.1
+deepgram-sdk==6.0.0rc2
+elevenlabs==2.36.1
+pydantic==2.12.5

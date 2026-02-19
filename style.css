@@ -261,8 +261,12 @@ body {
     font-size: 1rem;
     background: var(--md-sys-color-surface);
     color: var(--md-sys-color-on-surface);
-    resize: vertical;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    resize: none;
+    transition: height 0.2s cubic-bezier(0.2, 0, 0, 1), border-color 0.2s, box-shadow 0.2s;
+    height: 56px;
+    min-height: 56px;
+    /* Match button height */
+    overflow-y: hidden;
 }
 
 .modern-textarea:focus {
@@ -486,7 +490,7 @@ body {
     font-size: 0.9375rem;
     color: var(--md-sys-color-on-surface);
     line-height: 1.6;
-    max-height: 250px;
+    max-height: 50vh;
     overflow-y: auto;
     white-space: pre-wrap;
     border: 1px solid var(--md-sys-color-outline-variant);
@@ -657,7 +661,8 @@ body {
 /* Responsive */
 .app-footer {
     text-align: center;
-    padding: var(--s4) 0;
+    padding: var(--s4) 0 var(--s16);
+    /* bottom padding clears the fixed status bar pill */
 }
 
 @media (max-width: 480px) {

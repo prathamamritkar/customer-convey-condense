@@ -146,7 +146,11 @@ function navigateTo(viewName) {
 
 // Keyboard & Navigation
 UI.navTabs.forEach(tab => tab.addEventListener('click', () => navigateTo(tab.dataset.tab)));
-UI.chat.input.addEventListener('input', syncInteractiveState);
+UI.chat.input.addEventListener('input', () => {
+    syncInteractiveState();
+    UI.chat.input.style.height = 'auto';
+    UI.chat.input.style.height = Math.min(UI.chat.input.scrollHeight, 300) + 'px';
+});
 UI.chat.input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.ctrlKey) {
         e.preventDefault();
@@ -180,7 +184,7 @@ function resetChatInput() {
     UI.chat.dropzone.hidden = false;
     UI.chat.chip.hidden = true;
     UI.chat.input.disabled = false;
-    UI.chat.input.placeholder = "Paste conversation or notes here... (Ctrl+Enter to summarize)";
+    UI.chat.input.placeholder = "Paste raw text or interaction logs here...";
     syncInteractiveState();
 }
 
@@ -194,7 +198,7 @@ function handleAudioFile(file) {
     if (!validExts.some(ext => file.name.toLowerCase().endsWith(ext))) {
         return notify('Incompatible audio format.', 'error');
     }
-    if (file.size > 25 * 1024 * 1024) return notify('File exceeds 25MB threshold.', 'error');
+    if (file.size > 50 * 1024 * 1024) return notify('File exceeds 50MB high-capacity threshold.', 'error');
 
     AppState.currentAudio = file;
     UI.audio.fileName.textContent = file.name;
@@ -214,13 +218,13 @@ function resetAudioInput() {
 // ── Intelligence Processing ──────────────────────────────────────────────
 
 UI.chat.submitBtn.addEventListener('click', async () => {
-    if (AppState.chatDoc) await processClarityDocument();
-    else await processClarityText();
+    if (AppState.chatDoc) await processTextDocument();
+    else await processRawText();
 });
 
 UI.audio.submitBtn.addEventListener('click', async () => await processVoiceSignal());
 
-async function processClarityText() {
+async function processRawText() {
     const text = UI.chat.input.value.trim();
     if (!text) return;
 
@@ -242,7 +246,7 @@ async function processClarityText() {
     }
 }
 
-async function processClarityDocument() {
+async function processTextDocument() {
     toggleLoader(true, 'Analyzing raw source...');
     setGlobalLock(true);
     try {
@@ -321,7 +325,7 @@ async function initiateRecording() {
         UI.audio.micBtn.classList.add('recording');
         UI.audio.micBtn.disabled = false;
         UI.audio.micText.textContent = 'Recording Active (Click to Stop)';
-        notify('Clarity capture active', 'success');
+        notify('Voice capture active', 'success');
     } catch (e) {
         notify('Microphone authentication failed', 'error');
     }
@@ -339,7 +343,7 @@ function finalizeRecording() {
 // ── Distillation Reporting ───────────────────────────────────────────────
 
 function displayReport(data) {
-    UI.results.badge.textContent = data.type === 'chat' ? 'Clarity Insight' : 'Voice Insight';
+    UI.results.badge.textContent = data.type === 'chat' ? 'Text Insight' : 'Voice Insight';
     UI.results.summary.textContent = data.summary;
 
     const showTranscription = data.type === 'call' && data.transcription;
@@ -389,7 +393,7 @@ function renderArchive() {
     UI.historyList.innerHTML = AppState.history.map(item => `
         <div class="history-card" data-id="${item.id}">
             <div class="history-header">
-                <span class="item-type">${item.type === 'chat' ? 'CLARITY' : 'VOICE'}</span>
+                <span class="item-type">${item.type === 'chat' ? 'TEXT' : 'VOICE'}</span>
                 <span class="item-time">${formatTimeAgo(new Date(item.timestamp))}</span>
             </div>
             <div class="item-preview">${item.summary}</div>
