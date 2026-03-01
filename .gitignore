@@ -14,12 +14,8 @@ Lib/
 Scripts/
 Include/
 
-
 # Uploads
 uploads/
-*.m4a
-*.wav
-*.mp3
 
 # IDE
 .vscode/
