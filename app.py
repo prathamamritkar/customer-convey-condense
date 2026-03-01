@@ -117,24 +117,51 @@ def transcribe_via_hf_space(audio_path: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _elevenlabs_transcribe(audio_path: str) -> str:
-    """ElevenLabs Scribe v2 — premium quality + speaker diarization."""
+    """
+    ElevenLabs Speech-to-Text (Scribe v1) — file upload with speaker diarization.
+    SDK: elevenlabs>=2.37 — client.speech_to_text.convert(file=..., model_id='scribe_v1')
+    Response has .words[] with .speaker_id and .text per word.
+    """
     with open(audio_path, "rb") as f:
-        response = elevenlabs_client.scribe.transcribe(
-            audio=f,
-            model="scribe_v2",
-            language="en",
+        response = elevenlabs_client.speech_to_text.convert(
+            file=f,
+            model_id="scribe_v1",
             diarize=True,
+            language_code="en",
+            timestamps_granularity="word",   # get word-level timestamps + speaker_id
         )
 
-    if hasattr(response, 'segments') and response.segments:
-        lines = []
-        for seg in response.segments:
-            speaker = f"Speaker {seg.speaker}" if hasattr(seg, 'speaker') else "Speaker"
-            text    = seg.text if hasattr(seg, 'text') else str(seg)
-            lines.append(f"{speaker}: {text}")
-        if lines:
-            return "\n\n".join(lines)
+    lines = []
 
+    # Path A — word-level with speaker_id (primary in scribe_v1 with diarize=True)
+    if hasattr(response, 'words') and response.words:
+        current_speaker = None
+        current_text   = []
+        for w in response.words:
+            spk = getattr(w, 'speaker_id', None)
+            txt = getattr(w, 'text', '') or getattr(w, 'punctuated_word', '')
+            if spk != current_speaker:
+                if current_speaker is not None and current_text:
+                    lines.append(f"Speaker {current_speaker}: {' '.join(current_text).strip()}")
+                current_speaker = spk
+                current_text    = [txt]
+            else:
+                current_text.append(txt)
+        if current_speaker is not None and current_text:
+            lines.append(f"Speaker {current_speaker}: {' '.join(current_text).strip()}")
+
+    # Path B — utterances/segments level
+    if not lines:
+        segs = getattr(response, 'utterances', None) or getattr(response, 'segments', None) or []
+        for seg in segs:
+            spk = getattr(seg, 'speaker_id', None) or getattr(seg, 'speaker', '?')
+            txt = getattr(seg, 'text', '') or getattr(seg, 'transcript', '')
+            lines.append(f"Speaker {spk}: {txt.strip()}")
+
+    if lines:
+        return "\n\n".join(lines)
+
+    # Path C — plain text (no diarization)
     if hasattr(response, 'text') and response.text:
         return response.text
     return str(response)
@@ -142,27 +169,18 @@ def _elevenlabs_transcribe(audio_path: str) -> str:
 
 def _deepgram_transcribe(audio_path: str) -> str:
     """
-    [FIX #1] Deepgram Nova-2 with acoustic speaker diarization.
-    Corrected to use the PrerecordedOptions dataclass and the
-    .listen.prerecorded.v("1").transcribe_file() method (SDK v3–v6 compatible).
-    The original code used the invalid path .listen.v1.media.transcribe_file()
-    which silently failed on every call.
+    Deepgram Nova-2 with speaker diarization.
+    deepgram-sdk==6.0.0rc2 API (confirmed by introspection):
+      - client.listen.v1.media.transcribe_file(request=bytes, **kwargs)
+      - No PrerecordedOptions class — all options are direct keyword args.
+      - client.listen.prerecorded does NOT exist in v6.
+      - Response: response.results.utterances[i].speaker / .transcript
     """
-    # Lazy import — deepgram-sdk v3 exports from root; v6+ may use sub-module path
-    try:
-        from deepgram import PrerecordedOptions
-    except ImportError:
-        try:
-            from deepgram.audio.transcribe import PrerecordedOptions
-        except ImportError as exc:
-            raise RuntimeError(f"Cannot import PrerecordedOptions from deepgram SDK: {exc}")
-
     with open(audio_path, "rb") as f:
-        buffer_data = f.read()
+        buf = f.read()
 
-    source = {"buffer": buffer_data}
-
-    options = PrerecordedOptions(
+    response = deepgram_client.listen.v1.media.transcribe_file(
+        request=buf,
         model="nova-2",
         smart_format=True,
         diarize=True,
@@ -171,11 +189,7 @@ def _deepgram_transcribe(audio_path: str) -> str:
         language="en",
     )
 
-    response = deepgram_client.listen.prerecorded.v("1").transcribe_file(
-        source, options
-    )
-
-    # Utterances path — speaker-separated segments (richest output)
+    # Parse utterances (speaker-separated segments)
     if (
         hasattr(response, 'results')
         and hasattr(response.results, 'utterances')
@@ -188,7 +202,7 @@ def _deepgram_transcribe(audio_path: str) -> str:
         if lines:
             return "\n\n".join(lines)
 
-    # Channel alternatives path — plain transcript fallback
+    # Fallback: channel alternatives plain transcript
     if (
         hasattr(response, 'results')
         and hasattr(response.results, 'channels')
@@ -199,6 +213,10 @@ def _deepgram_transcribe(audio_path: str) -> str:
             return alt.transcript
 
     raise RuntimeError("Deepgram response contained no parseable transcript.")
+
+
+
+
 
 
 def _groq_transcribe(audio_path: str) -> str:
