@@ -10,6 +10,10 @@ __pycache__/
 venv/
 env/
 ENV/
+Lib/
+Scripts/
+Include/
+
 
 # Uploads
 uploads/

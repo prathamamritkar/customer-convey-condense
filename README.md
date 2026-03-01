@@ -405,3 +405,258 @@ This project is developed for educational and demonstration purposes.
 **Built with ❤️ for intelligent conversation processing**
 
 *Last Updated: February 2026*
+
+
+# Briefly — Distributed Hybrid Architecture: Deployment Guide
+
+> **Zero-cost · 100% uptime · Acoustic diarization + tone analysis**
+
+---
+
+## What Was Fixed and Why
+
+### Fix #1 — Deepgram SDK v6 (Silent Failure)
+The original code used an invalid SDK method path:
+```python
+# ❌ BEFORE — caused AttributeError silently caught by try/except
+deepgram_client.listen.v1.media.transcribe_file(request=buffer_data, model="nova-2", ...)
+
+# ✅ AFTER — correct SDK v3–v6 API with PrerecordedOptions dataclass
+from deepgram import DeepgramClient, PrerecordedOptions
+options = PrerecordedOptions(model="nova-2", smart_format=True, diarize=True, ...)
+response = deepgram_client.listen.prerecorded.v("1").transcribe_file(source, options)
+```
+Deepgram was **always silently falling through to Groq** (no diarization). This is now fixed — Deepgram Nova-2 will correctly run with full speaker diarization when ElevenLabs is unavailable.
+
+### Fix #2 — Vercel Serverless Timeout
+```json
+// ❌ BEFORE vercel.json — used Vercel's 10s default (audio never completed)
+{ "version": 2, "rewrites": [...] }
+
+// ✅ AFTER — 60s limit (max for Hobby plan) + 512MB memory
+{ "functions": { "app.py": { "maxDuration": 60, "memory": 512 } } }
+```
+Additionally, a **runtime file-size guard** was added: files above `VERCEL_SAFE_AUDIO_MB` (4MB / ~4min audio) on Vercel are automatically routed exclusively to the HF Space node to avoid body-size limits.
+
+---
+
+## Architecture Overview
+
+```
+ ┌─────────────────────────────────────────────────────────────┐
+ │                    Browser (HTML/JS)                        │
+ │   POST /api/process-call  (audio ≤ 50MB)                    │
+ └──────────────────────────┬──────────────────────────────────┘
+                            │
+ ┌──────────────────────────▼──────────────────────────────────┐
+ │          Flask Backend (Vercel / local)  app.py             │
+ │                                                             │
+ │   competitive_transcribe()  ← "The Winner Stays"            │
+ │                                                             │
+ │   Thread A ──────────────────────────────────────────────►  │
+ │   transcribe_via_hf_space()        HF Space (free CPU)      │
+ │   [faster-whisper + pyannote 3.1   ECAPA-TDNN acoustic      │
+ │    + SpeechBrain emotion           diarization              │
+ │    + Parselmouth prosody]          + tone profile]          │
+ │                                                             │
+ │   Thread B ──────────────────────────────────────────────►  │
+ │   perform_voice_capture_apis()     API Chain (paid keys)    │
+ │   [ElevenLabs Scribe (primary)     Fast, high quality       │
+ │    → Deepgram Nova-2 (fixed)       with diarization         │
+ │    → Groq Whisper-large-v3]                                 │
+ │                        │                                     │
+ │   threading.Event.wait(timeout)                             │
+ │   ← First valid result wins →                               │
+ │                        │                                     │
+ │   generate_insight()   ▼                                    │
+ │   Groq Llama-3.3-70b / Deepgram Text                       │
+ └─────────────────────────────────────────────────────────────┘
+```
+
+**Winner logic:**
+- Fastest non-empty response wins; the other thread finishes in background (daemon) and is discarded
+- `source_node` field in API response tells you which node won each time
+- If BOTH fail → clear error message (never a silent empty result)
+
+---
+
+## Part 1 — Deploy the HuggingFace Space Node
+
+### Step 1.1 — Create the Space
+
+1. Go to [huggingface.co/new-space](https://huggingface.co/new-space)
+2. Settings:
+   - **Space name:** `briefly-asr-node` (or any name)
+   - **SDK:** `Docker`
+   - **Hardware:** `CPU Basic` ← **free tier**
+   - **Visibility:** `Private` ← important for security
+3. Click **Create Space**
+
+### Step 1.2 — Upload the Space Files
+
+You have two options:
+
+**Option A — Git push (recommended)**
+```bash
+# In your project directory
+cd hf_space/
+
+# Clone the empty Space repo
+git clone https://huggingface.co/spaces/YOUR_USERNAME/briefly-asr-node
+cd briefly-asr-node
+
+# Copy the three files into it
+cp ../hf_space/app.py .
+cp ../hf_space/requirements.txt .
+cp ../hf_space/Dockerfile .
+
+# Push
+git add .
+git commit -m "Initial ASR node deployment"
+git push
+```
+
+**Option B — HF Web UI**
+- In the Space, go to **Files** tab → **Upload files**
+- Upload: `app.py`, `requirements.txt`, `Dockerfile`
+
+### Step 1.3 — Set Space Secrets (Sensitive Keys)
+
+In your HF Space → **Settings** → **Repository secrets** → **New secret**
+
+| Secret Name | Value | Purpose |
+|---|---|---|
+| `HF_TOKEN` | Your HF read token (from [hf.co/settings/tokens](https://huggingface.co/settings/tokens)) | Accesses gated pyannote model |
+| `SPACE_SECRET_KEY` | Generate random: `openssl rand -hex 32` | (Optional) Restricts who calls your Space |
+| `WHISPER_MODEL` | `large-v3` or `medium` or `small` | Controls quality/speed trade-off |
+
+> [!IMPORTANT]
+> You **must** go to [huggingface.co/pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) and **accept the model's usage terms** while logged in with the account whose token you use. The model is gated and requires this one-time click.
+
+### Step 1.4 — Wait for Build (~5–15 min on first deploy)
+
+- Space → **Logs** tab shows build progress
+- When you see `Running on http://0.0.0.0:7860` → the node is live
+- On first real request, models download from HF Hub (~4GB for large-v3) → first cold start is 3–8 min
+- Subsequent requests use the cached models in `/tmp`
+
+> [!TIP]
+> To speed up cold starts, change `WHISPER_MODEL=medium` (~1.5GB) for free-tier. `large-v3` gives best accuracy but ~4GB download.
+
+### Step 1.5 — Get the Space API URL
+
+Your Space URL pattern: `https://YOUR_USERNAME-briefly-asr-node.hf.space`
+
+For a **private** Space, you call it with your HF token via `gradio_client`.
+
+---
+
+## Part 2 — Wire the HF Node into the Flask Backend
+
+### Step 2.1 — Add to your `.env` file
+
+```bash
+# Existing keys — keep as-is
+ELEVENLABS_API_KEY=sk_...
+GROQ_API_KEY=gsk_...
+DEEPGRAM_API_KEY=...
+MURF_API_KEY=...
+
+# NEW — HF Space node
+HF_SPACE_URL=YOUR_USERNAME/briefly-asr-node   # or full URL
+HF_SPACE_TOKEN=hf_your_read_token_here        # from hf.co/settings/tokens
+```
+
+> [!NOTE]
+> `HF_SPACE_URL` can be the short form `username/space-name` or the full URL `https://username-space-name.hf.space`. `gradio_client` accepts both.
+
+### Step 2.2 — Install the new dependency locally
+
+```bash
+pip install gradio_client>=1.3.0
+```
+Or re-install from requirements:
+```bash
+pip install -r requirements.txt
+```
+
+### Step 2.3 — Add to Vercel (if deployed there)
+
+In Vercel project → **Settings** → **Environment Variables**, add:
+- `HF_SPACE_URL` = `your-username/briefly-asr-node`
+- `HF_SPACE_TOKEN` = `hf_...`
+
+---
+
+## Part 3 — Verify Everything Works
+
+### Local test
+```bash
+# Start the backend
+python app.py
+
+# Check health endpoint — should show both nodes
+curl http://localhost:5000/api/health | python -m json.tool
+```
+
+Expected output:
+```json
+{
+  "architecture": "distributed_hybrid_competitive",
+  "nodes": {
+    "hf_space": { "configured": true, "url": "your-user/briefly-asr-node" },
+    "api_chain": { "configured": true, "providers": ["elevenlabs", "deepgram", "groq"] }
+  }
+}
+```
+
+### Audio process test
+```bash
+curl -X POST http://localhost:5000/api/process-call \
+  -F "audio=@test_call.mp3" | python -m json.tool
+```
+
+Look for `"source_node"` in the response — tells you which node won the race.
+
+---
+
+## Part 4 — Understanding the Competitive Execution Timing
+
+| File size | Expected winner | Why |
+|---|---|---|
+| < 1 MB (< ~1 min) | `api_chain` | ElevenLabs responds in ~3s; HF Space still warming models |
+| 1–5 MB (1–5 min) | `api_chain` | API chain wins ~90% of time when Space is warm |
+| 5–10 MB (5–10 min) | Race (both viable) | HF Space acoustic quality preferred if it wins |
+| > 10 MB on Vercel | `hf_space` only | API chain skipped to respect 60s serverless limit |
+
+The dynamic timeout scales with file size:
+- `overall_timeout = max(file_size_mb × 5, 45)` capped at 90s
+- Both nodes run concurrently until one returns
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `HF Space node failed: model not found` | pyannote gated terms not accepted | Visit [hf.co/pyannote/...](https://huggingface.co/pyannote/speaker-diarization-3.1) and accept |
+| `HF Space node failed: HF_TOKEN not set` | Secret missing in Space settings | Add `HF_TOKEN` in Space → Settings → Secrets |
+| `gradio_client not installed` | Missing dep | `pip install gradio_client` |
+| Deepgram still fallthrough to Groq | Old app.py cached | Confirm `perform_voice_capture_apis` calls `_deepgram_transcribe` with `PrerecordedOptions` |
+| Vercel still times out | maxDuration not applied | Re-deploy after updating vercel.json; confirm Hobby plan (max 60s) |
+| HF Space `RuntimeError: ffmpeg not found` | Docker build failed | Check Space build logs; verify Dockerfile `apt-get install ffmpeg` ran |
+| Space builds but first request hangs 10+ min | Model download on cold start | Expected on first run — use `WHISPER_MODEL=medium` to reduce download time |
+
+---
+
+## Cost Breakdown
+
+| Service | Tier | Monthly Cost |
+|---|---|---|
+| HuggingFace Space (CPU Basic) | Free | **$0** |
+| Vercel Hobby Plan | Free | **$0** |
+| Groq API (Llama + Whisper) | Free tier (generous) | **$0** |
+| ElevenLabs / Deepgram | Existing paid keys | Usage-billed (existing) |
+| **Total new infrastructure** | | **$0** |
+
+The HF Space node handles transcription entirely free. The paid API chain remains as the speed-optimised path, and you only pay for it when it wins the race (which is most small-file cases).
