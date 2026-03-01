@@ -1,18 +1,19 @@
-# Briefly - Intelligent Conversation Processing Platform
+# Qualora — AI Customer Support Quality Auditor
 
-> **AI-Powered Speech-to-Text & Summarization System**  
-> Transform complex conversations into actionable one-line insights with advanced speaker diarization.
+> **Turn every conversation into intelligence.**  
+> GenAI-powered quality auditing platform with LLM scoring of empathy, compliance, and resolution effectiveness.
 
 ---
 
 ## 📋 Project Overview
 
-**Briefly** is an intelligent conversation processing platform that converts audio recordings, live speech, and text documents into concise, actionable summaries. The system features advanced **speaker diarization** to distinguish between multiple participants in conversations, making it ideal for customer service, meetings, interviews, and more.
+**Qualora** is an enterprise-grade AI quality auditing platform that processes customer support calls and chats, producing structured QA scores via LLM-as-a-Judge evaluation. The system features advanced **speaker diarization**, psychological empathy metrics, 2D/3D data visualization, and a Human-in-the-Loop (HITL) supervisor override workflow.
 
 ### Key Capabilities
 
-- 🎙️ **Multi-Speaker Recognition** - Automatically identifies and labels different speakers in conversations
-- 🎯 **One-Line Summaries** - Distills complex interactions into actionable insights
+- 🎙️ **Multi-Speaker Recognition** — Automatically identifies and labels different speakers in conversations
+- 🎯 **LLM Quality Audit** — Agent F1 Score, Compliance Risk, Cognitive Empathy, Bias Reduction
+
 - 📁 **Multi-Format Support** - Processes audio files (MP3, WAV, M4A), documents (PDF, TXT, JSON), and live recordings
 - 🔄 **Real-Time Processing** - Live microphone capture with instant transcription
 - 📊 **Conversation History** - Searchable archive of all processed interactions

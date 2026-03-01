@@ -4,208 +4,284 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Briefly | Intelligent Conversation Processing</title>
+    <title>Qualora &mdash; AI Customer Support Quality Auditor</title>
     <meta name="description"
-        content="AI-driven signal processing: Convert complex voice and chat data into one-line intelligence.">
-    <link rel="stylesheet" href="style.css?v=2.0">
+        content="Qualora: GenAI-powered quality auditing platform. LLM scoring of empathy, compliance, and resolution effectiveness for customer support.">
+    <link rel="stylesheet" href="style.css?v=3.0">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap"
+        rel="stylesheet">
+    <!-- Material Symbols for MD3 consistent iconography -->
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200">
+    <!-- Chart.js for 2D Radar Chart -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Apache ECharts for 3D Topography -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
 </head>
 
 <body>
-    <!-- Accessibility Announcement Region -->
+    <!-- Toast Accessibility Region -->
     <div id="toast-outlet" class="toast-outlet" aria-live="polite"></div>
 
-    <!-- Persistent Status Bar -->
+    <!-- MD3 Status Bar -->
     <div class="app-status-bar" id="app-status-bar">
         <span class="status-indicator"></span>
         <span id="status-text">System Initializing...</span>
     </div>
 
     <div class="app-container">
-        <!-- Brand Identity Section -->
+        <!-- Brand Header -->
         <header class="app-header">
             <div class="app-logo" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
-                    stroke-linejoin="round">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                <!-- Qualora Logo: hexagon with waveform + quality check -->
+                <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" width="36" height="36">
+                    <polygon points="24,3 43,13.5 43,34.5 24,45 5,34.5 5,13.5" fill="#1E293B" stroke="#6366F1"
+                        stroke-width="2.2" />
+                    <rect x="11" y="21" width="3" height="6" rx="1.5" fill="#6366F1" />
+                    <rect x="16" y="16" width="3" height="16" rx="1.5" fill="#818CF8" />
+                    <rect x="21" y="19" width="3" height="10" rx="1.5" fill="#6366F1" />
+                    <rect x="26" y="14" width="3" height="20" rx="1.5" fill="#818CF8" />
+                    <rect x="31" y="20" width="3" height="8" rx="1.5" fill="#6366F1" />
+                    <circle cx="38" cy="10" r="6" fill="#10B981" />
+                    <polyline points="35,10 37.5,12.5 41,7.5" stroke="white" stroke-width="1.8" stroke-linecap="round"
+                        stroke-linejoin="round" fill="none" />
                 </svg>
             </div>
             <div class="app-title-group">
-                <h1>Briefly</h1>
-                <p class="app-tagline">Intelligent Signal Processing & Summarization</p>
+                <h1>Qualora <span class="header-badge">QA</span></h1>
+                <p class="app-tagline">Turn every conversation into intelligence.</p>
             </div>
         </header>
 
-        <!-- Primary Intelligence Module -->
+        <!-- Main Module -->
         <main class="main-content-card">
-            <!-- Navigation System -->
-            <nav class="tab-navigation" role="tablist" aria-label="Distillation Tools">
-                <button class="nav-tab active" role="tab" aria-selected="true" data-tab="chat" id="tab-chat"
-                    aria-controls="panel-chat">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                    </svg>
-                    <span>Text Engine</span>
-                </button>
-                <button class="nav-tab" role="tab" aria-selected="false" data-tab="call" id="tab-call"
+            <!-- Tab Navigation -->
+            <nav class="tab-navigation" role="tablist" aria-label="QA Modules">
+                <button class="nav-tab active" role="tab" aria-selected="true" data-tab="call" id="tab-call"
                     aria-controls="panel-call">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                        <line x1="12" y1="19" x2="12" y2="23" />
-                        <line x1="8" y1="23" x2="16" y2="23" />
-                    </svg>
-                    <span>Voice Decoder</span>
+                    <span class="material-symbols-rounded">mic</span>
+                    <span>Voice Audit</span>
+                </button>
+                <button class="nav-tab" role="tab" aria-selected="false" data-tab="chat" id="tab-chat"
+                    aria-controls="panel-chat">
+                    <span class="material-symbols-rounded">chat</span>
+                    <span>Chat Audit</span>
                 </button>
                 <button class="nav-tab" role="tab" aria-selected="false" data-tab="history" id="tab-history"
                     aria-controls="panel-history">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10" />
-                        <polyline points="12 6 12 12 16 14" />
-                    </svg>
+                    <span class="material-symbols-rounded">history</span>
                     <span>Archive</span>
                 </button>
             </nav>
 
-            <!-- Intelligence Input: Analysis -->
-            <section class="content-panel active" id="panel-chat" role="tabpanel">
+            <!-- Voice Audit Panel -->
+            <section class="content-panel active" id="panel-call" role="tabpanel">
                 <div class="input-field-group">
-                    <label class="field-label" for="chat-file-input">Raw Source (.pdf, .txt, .md, .json)</label>
-                    <input type="file" id="chat-file-input" accept=".txt,.csv,.json,.md,.log,.pdf" hidden>
-
-                    <div class="upload-dropzone" id="chat-dropzone" tabindex="0" role="button"
-                        aria-label="Upload document">
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <polyline points="17 8 12 3 7 8" />
-                            <line x1="12" y1="3" x2="12" y2="15" />
-                        </svg>
-                        <p class="dropzone-text">Drop raw data or <span class="highlight">browse
-                                source</span></p>
-                    </div>
-
-                    <div class="file-chip" id="chat-file-chip" hidden>
-                        <span id="chat-file-name" class="file-name"></span>
-                        <button class="chip-remove" id="chat-remove-file" type="button"
-                            aria-label="Remove document">&times;</button>
-                    </div>
-                </div>
-
-                <div class="input-field-group">
-
-                    <textarea id="chat-input" class="modern-textarea"
-                        placeholder="Paste raw text or interaction logs here..." rows="1"></textarea>
-                </div>
-
-                <button class="btn-primary" id="process-chat-btn" type="button">
-                    <span>Analyze & Summarize</span>
-                </button>
-            </section>
-
-            <!-- Intelligence Input: Transcription -->
-            <section class="content-panel" id="panel-call" role="tabpanel">
-                <div class="input-field-group">
-                    <label class="field-label" for="audio-input">Audio Stream (.mp3, .wav, .m4a)</label>
+                    <label class="field-label" for="audio-input">
+                        <span class="material-symbols-rounded">audio_file</span>
+                        Upload Call Recording (.mp3, .wav, .m4a)
+                    </label>
                     <input type="file" id="audio-input" accept=".mp3,.wav,.m4a,.ogg,.webm,.mp4,audio/*" hidden>
-
-                    <div class="upload-dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload audio">
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path d="M9 18V5l12-2v13" />
-                            <circle cx="6" cy="18" r="3" />
-                            <circle cx="18" cy="16" r="3" />
-                        </svg>
-                        <p class="dropzone-text">Drop audio capture or <span class="highlight">browse stream</span></p>
+                    <div class="upload-dropzone" id="dropzone" tabindex="0" role="button"
+                        aria-label="Upload audio call">
+                        <span class="material-symbols-rounded dropzone-icon">cloud_upload</span>
+                        <p class="dropzone-text">Drop call recording or <span class="highlight">browse files</span></p>
+                        <p class="dropzone-hint">Supports MP3, WAV, M4A · Max 50MB</p>
                     </div>
-
                     <div class="file-chip" id="file-chip" hidden>
+                        <span class="material-symbols-rounded">audio_file</span>
                         <span id="file-name" class="file-name"></span>
                         <button class="chip-remove" id="remove-file" type="button"
                             aria-label="Remove recording">&times;</button>
                     </div>
                 </div>
-
                 <div class="input-field-group">
                     <button class="btn-outline" id="mic-record-btn" type="button">
-                        <svg id="mic-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                        </svg>
+                        <span class="material-symbols-rounded" id="mic-icon-sym">mic</span>
                         <span id="mic-text">Capture Live Audio</span>
                     </button>
                 </div>
-
                 <button class="btn-primary" id="process-call-btn" type="button" disabled>
-                    <span>Transcribe & Summarize</span>
+                    <span class="material-symbols-rounded">analytics</span>
+                    <span>Audit Call &amp; Score</span>
                 </button>
             </section>
 
-            <!-- Intelligence Library -->
-            <section class="content-panel" id="panel-history" role="tabpanel">
-                <div class="history-scroll" id="history-list">
-                    <!-- History injected here -->
+            <!-- Chat / Text Audit Panel -->
+            <section class="content-panel" id="panel-chat" role="tabpanel">
+                <div class="input-field-group">
+                    <label class="field-label" for="chat-file-input">
+                        <span class="material-symbols-rounded">description</span>
+                        Upload Chat Log (.pdf, .txt, .json, .md)
+                    </label>
+                    <input type="file" id="chat-file-input" accept=".txt,.csv,.json,.md,.log,.pdf" hidden>
+                    <div class="upload-dropzone" id="chat-dropzone" tabindex="0" role="button"
+                        aria-label="Upload chat log">
+                        <span class="material-symbols-rounded dropzone-icon">upload_file</span>
+                        <p class="dropzone-text">Drop chat log or <span class="highlight">browse source</span></p>
+                        <p class="dropzone-hint">PDF, TXT, JSON, Markdown</p>
+                    </div>
+                    <div class="file-chip" id="chat-file-chip" hidden>
+                        <span class="material-symbols-rounded">description</span>
+                        <span id="chat-file-name" class="file-name"></span>
+                        <button class="chip-remove" id="chat-remove-file" type="button"
+                            aria-label="Remove document">&times;</button>
+                    </div>
                 </div>
+                <div class="input-field-group">
+                    <textarea id="chat-input" class="modern-textarea"
+                        placeholder="Or paste chat transcript directly here..." rows="1"></textarea>
+                </div>
+                <button class="btn-primary" id="process-chat-btn" type="button">
+                    <span class="material-symbols-rounded">fact_check</span>
+                    <span>Audit Chat &amp; Score</span>
+                </button>
             </section>
 
-            <!-- Intelligence Output -->
+            <!-- Archive Panel -->
+            <section class="content-panel" id="panel-history" role="tabpanel">
+                <div class="history-scroll" id="history-list"></div>
+            </section>
+
+            <!-- ════════════════════════════════════════════════════════════════
+                 QA AUDIT RESULTS DASHBOARD (Milestone 2)
+                 ════════════════════════════════════════════════════════════════ -->
             <section class="content-panel" id="panel-results" hidden>
                 <div class="result-container">
-                    <div class="result-tag" id="result-badge">Insight Report</div>
 
+                    <!-- Row 1: At-a-Glance KPI Cards -->
+                    <div class="kpi-row" id="kpi-row">
+                        <div class="kpi-card" id="kpi-f1">
+                            <div class="kpi-icon"><span class="material-symbols-rounded">speed</span></div>
+                            <div class="kpi-label">Agent F1 Score</div>
+                            <div class="kpi-value" id="kpi-f1-val">—</div>
+                        </div>
+                        <div class="kpi-card" id="kpi-satisfaction">
+                            <div class="kpi-icon"><span class="material-symbols-rounded">sentiment_satisfied</span>
+                            </div>
+                            <div class="kpi-label">Satisfaction</div>
+                            <div class="kpi-value" id="kpi-sat-val">—</div>
+                        </div>
+                        <div class="kpi-card" id="kpi-compliance">
+                            <div class="kpi-icon"><span class="material-symbols-rounded">policy</span></div>
+                            <div class="kpi-label">Compliance Risk</div>
+                            <div class="kpi-value" id="kpi-comp-val">—</div>
+                        </div>
+                    </div>
+
+                    <!-- Row 2: Summary -->
                     <div class="summary-card">
-                        <span class="detail-label">Executive Summary / Core Logic</span>
+                        <div class="detail-label">
+                            <span class="material-symbols-rounded">summarize</span>
+                            Interaction Summary
+                        </div>
                         <p class="summary-text" id="summary-text"></p>
                     </div>
 
-                    <div class="detail-block" id="transcription-block" hidden>
-                        <span class="detail-label">Decoded Voice Stream</span>
+                    <!-- Row 3: Visualizations -->
+                    <div class="viz-grid">
+                        <!-- 2D Radar: Agent Skill Matrix -->
+                        <div class="viz-card">
+                            <div class="viz-card-header">
+                                <span class="material-symbols-rounded">radar</span>
+                                Agent Quality Radar
+                            </div>
+                            <div class="chart-wrapper">
+                                <canvas id="qualityRadarChart"></canvas>
+                            </div>
+                        </div>
+                        <!-- 3D Topography: Emotional Landscape -->
+                        <div class="viz-card">
+                            <div class="viz-card-header">
+                                <span class="material-symbols-rounded">landscape</span>
+                                Emotional Landscape (3D)
+                            </div>
+                            <div id="emotionTopographyChart" class="echarts-container"></div>
+                        </div>
+                    </div>
+
+                    <!-- Row 4: Compliance Flags + Behavioral Nudges -->
+                    <div class="audit-details-grid">
+                        <div class="audit-detail-card flags-card" id="flags-section">
+                            <div class="detail-label">
+                                <span class="material-symbols-rounded">flag</span>
+                                Compliance Flags
+                            </div>
+                            <ul class="detail-list" id="flags-list"></ul>
+                        </div>
+                        <div class="audit-detail-card nudges-card">
+                            <div class="detail-label">
+                                <span class="material-symbols-rounded">psychology</span>
+                                Behavioral Nudges
+                            </div>
+                            <ul class="detail-list" id="nudges-list"></ul>
+                        </div>
+                    </div>
+
+                    <!-- Row 5: Decoded Transcript (Progressive Disclosure) -->
+                    <details class="detail-accordion" id="transcription-block">
+                        <summary class="accordion-summary">
+                            <span class="material-symbols-rounded">transcribe</span>
+                            View Full Transcript
+                        </summary>
                         <div class="detail-content" id="transcription-text"></div>
+                    </details>
+
+                    <!-- Row 6: HITL Override Panel -->
+                    <div class="hitl-panel" id="hitl-panel">
+                        <div class="hitl-header">
+                            <span class="material-symbols-rounded">supervisor_account</span>
+                            <strong>Supervisor Override</strong>
+                            <span class="hitl-badge" id="hitl-badge">AI Scored</span>
+                        </div>
+                        <p class="hitl-subtitle">Review and override the LLM-generated audit scores before finalizing.
+                        </p>
+                        <div class="hitl-actions">
+                            <button class="hitl-btn hitl-approve" id="hitl-approve-btn" type="button">
+                                <span class="material-symbols-rounded">check_circle</span> Approve
+                            </button>
+                            <button class="hitl-btn hitl-flag" id="hitl-flag-btn" type="button">
+                                <span class="material-symbols-rounded">flag</span> Flag for Review
+                            </button>
+                            <button class="hitl-btn hitl-reject" id="hitl-reject-btn" type="button">
+                                <span class="material-symbols-rounded">cancel</span> Reject Score
+                            </button>
+                        </div>
+                        <div class="hitl-status" id="hitl-status" hidden></div>
                     </div>
 
-                    <div class="detail-block" id="original-block" hidden>
-                        <span class="detail-label">Source Context / Buffer</span>
-                        <div class="detail-content" id="original-text"></div>
-                    </div>
-
+                    <!-- Row 7: Actions -->
                     <div class="action-grid">
                         <button class="btn-secondary" id="back-btn" type="button">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
-                                <polyline points="15 18 9 12 15 6" />
-                            </svg>
-                            <span>Back</span>
+                            <span class="material-symbols-rounded">arrow_back</span>
+                            <span>New Audit</span>
                         </button>
                         <button class="btn-primary" id="copy-btn" type="button">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                            </svg>
+                            <span class="material-symbols-rounded">content_copy</span>
                             <span>Copy Summary</span>
                         </button>
                     </div>
                 </div>
             </section>
 
-            <!-- Cognitive Loading State -->
+            <!-- Loading Overlay -->
             <div class="app-overlay-loader" id="loader" hidden>
                 <div class="m3-spinner"></div>
-                <p id="loader-text" class="app-tagline">Processing signal...</p>
+                <p id="loader-text" class="loader-msg">Analyzing interaction...</p>
             </div>
         </main>
 
         <footer class="app-tagline app-footer">
-            &copy; 2026 Briefly &nbsp;&middot;&nbsp; Pratham Amritkar
+            &copy; 2026 Qualora &nbsp;&middot;&nbsp; Pratham Amritkar &nbsp;&middot;&nbsp; Milestone 2
         </footer>
     </div>
 
-    <!-- Core Logic -->
-    <script src="script.js?v=2.0"></script>
+    <script src="script.js?v=3.0"></script>
 </body>
 
 </html>

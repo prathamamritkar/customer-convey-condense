@@ -358,71 +358,113 @@ def competitive_transcribe(audio_path: str, file_size_bytes: int) -> tuple[str, 
     )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SECTION 4 — INSIGHT DISTILLATION (unchanged logic, preserved fully)
+# SECTION 4 — QUALITY AUDIT ENGINE (Milestone 2 — LLM-as-a-Judge)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def generate_quality_audit(text: str, content_type: str = "interaction") -> dict:
+_AUDIT_SYSTEM_PROMPT = """You are an Expert Customer Support Quality Auditor and applied Psychologist.
+You receive a customer support transcript (voice or chat) and must return ONLY a valid JSON object — no markdown, no explanation, JSON only.
+
+Evaluate every dimension carefully. Think step-by-step internally, but return only the final JSON.
+
+JSON schema (all fields required):
+{
+  "summary": "<one-sentence plain-English summary of the interaction and its outcome>",
+  "agent_f1_score": <float 0.0–1.0, harmonic mean of precision and recall of agent helpfulness>,
+  "satisfaction_prediction": "<High|Medium|Low>",
+  "compliance_risk": "<Green|Amber|Red>",
+  "quality_matrix": {
+    "language_proficiency": <int 1–10>,
+    "cognitive_empathy": <int 1–10>,
+    "efficiency": <int 1–10>,
+    "bias_reduction": <int 1–10>,
+    "active_listening": <int 1–10>
+  },
+  "emotional_timeline": [
+    {"turn": <int>, "speaker": "<Agent|Customer>", "emotion": "<Frustrated|Angry|Neutral|Confused|Relieved|Satisfied|Happy|Anxious|Professional|Empathetic|Calm>", "intensity": <int 1–10>}
+  ],
+  "compliance_flags": ["<specific violation or concern, if any>"],
+  "behavioral_nudges": ["<specific, psychologically-grounded coaching tip for the agent>"],
+  "hitl_review_required": <true|false>
+}
+
+Scoring guide:
+- agent_f1_score: precision = did the agent resolve correctly? recall = did they address all customer concerns?
+- compliance_risk: Green = no issues, Amber = minor deviations, Red = serious breach
+- hitl_review_required: true if score is ambiguous or compliance_risk is Red
+- emotional_timeline: include every speaker turn. Map turns sequentially (turn 1, 2, 3...).
+- behavioral_nudges: 2–4 specific tips. Ground them in psychology (e.g. reflective listening, cognitive reframing).
+- compliance_flags: empty array [] if none found."""
+
+def generate_quality_audit(transcript: str) -> dict:
     """
-    Generate an enterprise-grade Quality Assurance Audit using Groq (Llama-3.3-70b-versatile).
-    Strict JSON output enforced. Evaluates Empathy, Compliance, CSAT, Resolution, and Agent Quality.
+    LLM-as-a-Judge: Groq Llama-3.3-70b scores the support interaction.
+    Returns a structured audit dict. Never raises — always returns a safe default on error.
     """
+
+    _FALLBACK = {
+        "summary": "Audit unavailable — LLM engine offline.",
+        "agent_f1_score": 0.0,
+        "satisfaction_prediction": "Unknown",
+        "compliance_risk": "Unknown",
+        "quality_matrix": {
+            "language_proficiency": 0, "cognitive_empathy": 0,
+            "efficiency": 0, "bias_reduction": 0, "active_listening": 0
+        },
+        "emotional_timeline": [],
+        "compliance_flags": [],
+        "behavioral_nudges": ["LLM audit engine was unavailable. Check GROQ_API_KEY."],
+        "hitl_review_required": True,
+    }
+
     if not groq_client:
-        raise RuntimeError("Groq API client not configured. Required for QA Auditing.")
+        print("⚠️  [Audit] Groq client not configured — returning fallback.")
+        return _FALLBACK
 
-    print(f"--- [QA Audit] Groq Llama ({content_type}) ---")
-    MODEL_ID = "llama-3.3-70b-versatile"
+    # Truncate very long transcripts to stay within Groq's context safely
+    MAX_CHARS = 80_000
+    if len(transcript) > MAX_CHARS:
+        print(f"[Audit] Truncating transcript: {len(transcript)} → {MAX_CHARS} chars")
+        transcript = transcript[:MAX_CHARS] + "\n...[truncated]"
 
-    system_prompt = (
-        "You are an expert Principal AI QA Auditor evaluating a customer support interaction. "
-        "Analyze the transcript carefully. Your task is to extract emotional states and evaluate the agent strictly "
-        "across core pillars: Empathy, Compliance, and Issue Resolution.\n\n"
-        "You MUST output exactly in JSON format, adhering to this schema:\n"
-        "{\n"
-        '  "thought_process": "Brief step-by-step reasoning of the interaction",\n'
-        '  "emotion_timeline": [{"speaker": "...", "turn": 1, "emotion": "Angry/Frustrated/Neutral/Happy"}],\n'
-        '  "empathy_score": <int 1-10>,\n'
-        '  "compliance_status": "Pass" | "Fail" | "Partial",\n'
-        '  "resolution_status": "Resolved" | "Unresolved" | "Escalated",\n'
-        '  "csat_score": <int 1-10>,\n'
-        '  "efficiency_score": <int 1-10>,\n'
-        '  "violations": ["List of protocol violations, empty if none"],\n'
-        '  "suggestions": ["Actionable feedback for the agent"],\n'
-        '  "summary": "One-line interaction summary"\n'
-        "}\n\n"
-        "Be highly critical but fair. Default to 'Fail' for compliance if agent ignores security/policy. "
-        "Ensure the JSON is perfectly valid."
-    )
-
-    user_prompt = f"Evaluate this {content_type}:\n\n{text}"
+    user_prompt = f"Transcript to audit:\n\n{transcript}\n\nReturn ONLY the JSON object."
 
     try:
-        resp = groq_client.chat.completions.create(
+        print("--- [Audit] Groq Llama-3.3-70b (LLM-as-a-Judge) ---")
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {"role": "system", "content": _AUDIT_SYSTEM_PROMPT},
+                {"role": "user",   "content": user_prompt},
             ],
-            model=MODEL_ID,
-            temperature=0.3,
             response_format={"type": "json_object"},
-            max_tokens=1024,
+            temperature=0.3,   # lower = more consistent scoring
+            max_tokens=2048,
         )
-        content = resp.choices[0].message.content.strip()
-        return json.loads(content)
+        raw = response.choices[0].message.content.strip()
+        audit = json.loads(raw)
+        print("✅ [Audit] Quality audit complete.")
+
+        # Ensure all expected keys exist (defensive merge with fallback)
+        for key, val in _FALLBACK.items():
+            if key not in audit:
+                audit[key] = val
+        # Ensure quality_matrix sub-keys
+        qm = audit.get("quality_matrix", {})
+        for k, v in _FALLBACK["quality_matrix"].items():
+            if k not in qm:
+                qm[k] = v
+        audit["quality_matrix"] = qm
+
+        return audit
+
+    except json.JSONDecodeError as e:
+        print(f"⚠️  [Audit] JSON parse failed: {e}")
+        return _FALLBACK
     except Exception as e:
-        print(f"⚠️  [Groq QA Audit Failed] {e}")
-        # Graceful fallback JSON if the LLM fails to parse or errors out
-        return {
-            "thought_process": "Error evaluating transcript.",
-            "emotion_timeline": [],
-            "empathy_score": 0,
-            "compliance_status": "Fail",
-            "resolution_status": "Unresolved",
-            "csat_score": 0,
-            "efficiency_score": 0,
-            "violations": ["System error during evaluation"],
-            "suggestions": ["Retry the audit API call"],
-            "summary": "Audit failed due to system error."
-        }
+        print(f"⚠️  [Audit] Groq call failed: {e}")
+        return _FALLBACK
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 5 — FILE PARSING (unchanged)
@@ -452,14 +494,15 @@ def extract_text_from_file(filepath: str, filename: str) -> str:
 
 @app.route('/api/process-chat', methods=['POST'])
 def process_chat():
-    """Process chat text and return summary."""
+    """Process chat text — returns structured QA audit (Milestone 2)."""
     try:
         data      = request.json or {}
         chat_text = data.get('text', '').strip()
         if not chat_text:
             return jsonify({'error': 'No content provided'}), 400
 
-        audit = generate_quality_audit(chat_text, "interaction")
+        print("[process-chat] Running quality audit...")
+        audit = generate_quality_audit(chat_text)
         return jsonify({
             'success':       True,
             'type':          'chat',
@@ -473,7 +516,7 @@ def process_chat():
 
 @app.route('/api/process-file', methods=['POST'])
 def process_file():
-    """Process uploaded text/PDF document and return summary."""
+    """Process uploaded text/PDF document — returns structured QA audit (Milestone 2)."""
     try:
         if 'file' not in request.files:
             return jsonify({'error': 'No file provided'}), 400
@@ -501,7 +544,8 @@ def process_file():
         if not text:
             return jsonify({'error': 'Could not extract text from file'}), 400
 
-        audit = generate_quality_audit(text, "document")
+        print("[process-file] Running quality audit...")
+        audit = generate_quality_audit(text)
         return jsonify({
             'success':       True,
             'type':          'chat',
@@ -559,9 +603,9 @@ def process_call():
             except Exception:
                 pass
 
-        # ── Distillation ───────────────────────────────────────────────────
-        print("[process-call] Generating QA Audit...")
-        audit = generate_quality_audit(transcription, "voice capture")
+        # ── Quality Audit (Milestone 2) ────────────────────────────────────
+        print("[process-call] Running quality audit...")
+        audit = generate_quality_audit(transcription)
 
         return jsonify({
             'success':       True,
@@ -650,7 +694,8 @@ def serve_static(filename):
 
 if __name__ == '__main__':
     print("\n" + "=" * 65)
-    print("🚀  Briefly Signal Hub — Distributed Hybrid Mode")
+    print("🚀  Qualora — AI Customer Support Quality Auditor")
+    print("    Turn every conversation into intelligence.")
     print("=" * 65)
 
     hf_ready  = bool(HF_SPACE_URL and GRADIO_CLIENT_AVAILABLE)
