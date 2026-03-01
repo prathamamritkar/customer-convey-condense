@@ -12,8 +12,9 @@ from werkzeug.utils import secure_filename
 from groq import Groq
 from elevenlabs.client import ElevenLabs
 
-# ── [FIX #1] Deepgram SDK v6 — correct import with PrerecordedOptions ────────
-from deepgram import DeepgramClient, PrerecordedOptions
+# ── Deepgram SDK — PrerecordedOptions imported lazily inside function ─────────
+# (deepgram-sdk v6 moved PrerecordedOptions; lazy import avoids module-level crash)
+from deepgram import DeepgramClient
 
 # ── Optional: gradio_client for HF Space node (graceful if absent) ───────────
 try:
@@ -147,6 +148,15 @@ def _deepgram_transcribe(audio_path: str) -> str:
     The original code used the invalid path .listen.v1.media.transcribe_file()
     which silently failed on every call.
     """
+    # Lazy import — deepgram-sdk v3 exports from root; v6+ may use sub-module path
+    try:
+        from deepgram import PrerecordedOptions
+    except ImportError:
+        try:
+            from deepgram.audio.transcribe import PrerecordedOptions
+        except ImportError as exc:
+            raise RuntimeError(f"Cannot import PrerecordedOptions from deepgram SDK: {exc}")
+
     with open(audio_path, "rb") as f:
         buffer_data = f.read()
 
