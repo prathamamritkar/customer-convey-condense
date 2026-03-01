@@ -86,35 +86,42 @@ def test_elevenlabs(audio: Path):
 
         if has_words:
             words = resp.words
-            # Check speaker_id
-            sample = words[:5]
+            # Check speaker_id on first non-whitespace word
+            sample = [w for w in words if getattr(w, 'text', '').strip()][:5]
             for i, wrd in enumerate(sample):
                 spk = getattr(wrd, "speaker_id", "N/A")
                 txt = getattr(wrd, "text", getattr(wrd, "punctuated_word", "?"))
                 w(f"    word[{i}] speaker_id={spk!r}  text={txt!r}")
 
-            # Group by speaker
+            # Group by speaker — skip whitespace-only tokens
             turns = []
             cur_spk, cur_buf = None, []
             for wrd in words:
                 spk = getattr(wrd, "speaker_id", None)
-                txt = getattr(wrd, "text", "") or getattr(wrd, "punctuated_word", "")
+                txt = (getattr(wrd, "text", "") or getattr(wrd, "punctuated_word", "")).strip()
+                if not txt:          # skip ElevenLabs space-tokens
+                    continue
                 if spk != cur_spk:
-                    if cur_spk is not None: turns.append((cur_spk, " ".join(cur_buf)))
+                    if cur_spk is not None:
+                        turns.append((cur_spk, " ".join(cur_buf)))
                     cur_spk, cur_buf = spk, [txt]
                 else:
                     cur_buf.append(txt)
-            if cur_spk is not None: turns.append((cur_spk, " ".join(cur_buf)))
+            if cur_spk is not None:
+                turns.append((cur_spk, " ".join(cur_buf)))
+
+            # Clean label: 'speaker_0' → 'Speaker 0'
+            def fmt_spk(spk_id):
+                return spk_id.replace("speaker_", "Speaker ").strip() if spk_id else "Speaker ?"
 
             unique_speakers = set(t[0] for t in turns)
             if len(unique_speakers) > 1:
                 ok(f"ElevenLabs diarization — {len(unique_speakers)} distinct speakers, {len(turns)} turns")
-                for spk, txt in turns[:3]:
-                    w(f"    Speaker {spk}: {txt[:100]}")
+                for spk, txt in turns[:4]:
+                    w(f"    {fmt_spk(spk)}: {txt[:100]}")
                 results["elevenlabs"] = "PASS_WITH_DIARIZATION"
             else:
-                fail(f"ElevenLabs — only 1 speaker detected (diarize may not have worked)")
-                w(f"    speakers found: {unique_speakers}")
+                fail(f"ElevenLabs — only 1 speaker (diarize may not have worked)")
                 results["elevenlabs"] = "PASS_NO_DIARIZATION"
         elif has_text:
             fail("ElevenLabs — plain text only (no word-level diarization)")

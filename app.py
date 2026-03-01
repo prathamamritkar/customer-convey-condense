@@ -140,15 +140,22 @@ def _elevenlabs_transcribe(audio_path: str) -> str:
         for w in response.words:
             spk = getattr(w, 'speaker_id', None)
             txt = getattr(w, 'text', '') or getattr(w, 'punctuated_word', '')
+            if not txt.strip():       # skip whitespace-only tokens (EL returns spaces as words)
+                continue
             if spk != current_speaker:
                 if current_speaker is not None and current_text:
-                    lines.append(f"Speaker {current_speaker}: {' '.join(current_text).strip()}")
+                    # Convert 'speaker_0' → 'Speaker 0'  (avoids 'Speaker speaker_0' redundancy)
+                    label = current_speaker.replace('speaker_', 'Speaker ').strip()
+                    if not any(c.isdigit() or c.isalpha() for c in label):
+                        label = str(current_speaker)
+                    lines.append(f"{label}: {' '.join(current_text).strip()}")
                 current_speaker = spk
-                current_text    = [txt]
+                current_text    = [txt.strip()]
             else:
-                current_text.append(txt)
+                current_text.append(txt.strip())
         if current_speaker is not None and current_text:
-            lines.append(f"Speaker {current_speaker}: {' '.join(current_text).strip()}")
+            label = current_speaker.replace('speaker_', 'Speaker ').strip()
+            lines.append(f"{label}: {' '.join(current_text).strip()}")
 
     # Path B — utterances/segments level
     if not lines:
