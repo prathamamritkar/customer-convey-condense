@@ -291,7 +291,7 @@ async function processVoiceSignal() {
                 UI.tnp.status.hidden = false;
                 UI.tnp.status.textContent = 'Triggering Groq Whisper API...';
                 try {
-                    await apiFetch(`/job/${currentJobId}/fast-track`, { method: 'POST' });
+                    await apiFetch(`/job/${currentJobId}/transcribe-now`, { method: 'POST' });
                     UI.tnp.hint.textContent = 'Hardware acceleration engaged. First to finish wins.';
                 } catch (e) {
                     UI.tnp.status.textContent = 'Fast-track failed: ' + e.message;
@@ -315,9 +315,10 @@ async function pollJobStatus(jobId) {
 
         try {
             const res = await apiFetch(`/job/${jobId}/status`);
-            if (res.status === 'completed') {
-                renderAuditDashboard(res.data);
-                archiveAudit(res.data);
+            if (res.status === 'done') {
+                // Ensure the response is properly passed as the entire object
+                renderAuditDashboard(res);
+                archiveAudit(res);
                 resetAudioInput();
                 toggleLoader(false);
                 setGlobalLock(false);
@@ -325,9 +326,9 @@ async function pollJobStatus(jobId) {
                 currentJobId = null;
                 return;
             } else if (res.status === 'error') {
-                throw new Error(res.message);
+                throw new Error(res.error || 'Unknown job failure');
             } else {
-                UI.loaderText.textContent = res.message;
+                UI.loaderText.textContent = `Analyzing interaction... (Status: ${res.status})`;
             }
         } catch (e) {
             notify(e.message, 'error');
