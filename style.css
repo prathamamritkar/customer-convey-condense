@@ -99,6 +99,22 @@
     display: none !important;
 }
 
+/* Pre-define Material Symbols geometry to fully eliminate Layout Shift / FOUT */
+.material-symbols-rounded {
+    display: inline-block;
+    width: 1em;
+    /* Default Material Symbol optical size bounds */
+    height: 1em;
+    font-size: 24px;
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    vertical-align: middle;
+    letter-spacing: normal;
+    text-transform: none;
+    /* Hide ligature text until font loads */
+}
+
 html {
     font-size: 16px;
     scroll-behavior: smooth;
