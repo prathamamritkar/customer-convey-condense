@@ -101,6 +101,8 @@ const UI = {
         hint: $('#tnp-hint')
     },
     infoBar: $('#app-status-bar'),
+    statusText: $('#status-text'),
+    statusIndicator: $('.status-indicator'),
     toastOutlet: $('#toast-outlet'),
 };
 
@@ -323,11 +325,15 @@ async function pollJobStatus(jobId) {
                 setGlobalLock(false);
                 UI.tnp.panel.hidden = true;
                 currentJobId = null;
+                if (UI.statusText) UI.statusText.textContent = 'System Ready';
                 return;
             } else if (res.status === 'error') {
                 throw new Error(res.error || 'Unknown job failure');
             } else {
-                UI.loaderText.textContent = `Analyzing interaction... (Status: ${res.status})`;
+                UI.loaderText.textContent = 'Analyzing interaction...';
+                if (UI.statusText) {
+                    UI.statusText.textContent = `[Job ${jobId.substring(0, 6)}] ${res.status.replace(/_/g, ' ')}`;
+                }
             }
         } catch (e) {
             notify(e.message, 'error');
@@ -335,6 +341,7 @@ async function pollJobStatus(jobId) {
             setGlobalLock(false);
             UI.tnp.panel.hidden = true;
             currentJobId = null;
+            if (UI.statusText) UI.statusText.textContent = 'System Error';
             return;
         }
     }
