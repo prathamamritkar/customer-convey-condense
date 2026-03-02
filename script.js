@@ -93,6 +93,13 @@ const UI = {
     historyList: $('#history-list'),
     overlayLoader: $('#loader'),
     loaderText: $('#loader-text'),
+    tnp: {
+        panel: $('#transcribe-now-panel'),
+        btn: $('#transcribe-now-btn'),
+        label: $('#tnp-node-label'),
+        status: $('#tnp-status'),
+        hint: $('#tnp-hint')
+    },
     infoBar: $('#app-status-bar'),
     toastOutlet: $('#toast-outlet'),
 };
@@ -256,18 +263,81 @@ async function processTextDocument() {
     finally { toggleLoader(false); setGlobalLock(false); }
 }
 
+let currentJobId = null;
+
 async function processVoiceSignal() {
-    toggleLoader(true, 'Transcribing call & running quality audit...');
+    toggleLoader(true, 'Uploading audio track...');
     setGlobalLock(true);
+    UI.tnp.panel.hidden = true;
+    UI.tnp.btn.disabled = true;
+    UI.tnp.status.hidden = true;
+    UI.tnp.hint.innerHTML = 'HF Space acoustic diarization can take 30–90 s. Click below to start the API chain simultaneously — first result wins.';
+
     try {
         const formData = new FormData();
         formData.append('audio', AppState.currentAudio);
-        const res = await apiFetch('/process-call', { method: 'POST', body: formData });
-        renderAuditDashboard(res);
-        archiveAudit(res);
-        resetAudioInput();
-    } catch (err) { notify(err.message, 'error'); }
-    finally { toggleLoader(false); setGlobalLock(false); }
+        const res = await apiFetch('/start-call-audit', { method: 'POST', body: formData });
+        currentJobId = res.job_id;
+
+        let isFastTracked = false;
+        if (res.fallbacks_available) {
+            UI.tnp.panel.hidden = false;
+            UI.tnp.btn.disabled = false;
+
+            UI.tnp.btn.onclick = async () => {
+                if (!currentJobId || isFastTracked) return;
+                isFastTracked = true;
+                UI.tnp.btn.disabled = true;
+                UI.tnp.status.hidden = false;
+                UI.tnp.status.textContent = 'Triggering Groq Whisper API...';
+                try {
+                    await apiFetch(`/job/${currentJobId}/fast-track`, { method: 'POST' });
+                    UI.tnp.hint.textContent = 'Hardware acceleration engaged. First to finish wins.';
+                } catch (e) {
+                    UI.tnp.status.textContent = 'Fast-track failed: ' + e.message;
+                }
+            };
+        }
+
+        await pollJobStatus(currentJobId);
+
+    } catch (err) {
+        notify(err.message, 'error');
+        toggleLoader(false);
+        setGlobalLock(false);
+    }
+}
+
+async function pollJobStatus(jobId) {
+    while (true) {
+        await new Promise(r => setTimeout(r, 2000));
+        if (jobId !== currentJobId) return; // User cancelled or left
+
+        try {
+            const res = await apiFetch(`/job/${jobId}/status`);
+            if (res.status === 'completed') {
+                renderAuditDashboard(res.data);
+                archiveAudit(res.data);
+                resetAudioInput();
+                toggleLoader(false);
+                setGlobalLock(false);
+                UI.tnp.panel.hidden = true;
+                currentJobId = null;
+                return;
+            } else if (res.status === 'error') {
+                throw new Error(res.message);
+            } else {
+                UI.loaderText.textContent = res.message;
+            }
+        } catch (e) {
+            notify(e.message, 'error');
+            toggleLoader(false);
+            setGlobalLock(false);
+            UI.tnp.panel.hidden = true;
+            currentJobId = null;
+            return;
+        }
+    }
 }
 
 // ── Recording ─────────────────────────────────────────────────────────────
@@ -365,7 +435,17 @@ function renderAuditDashboard(data) {
     UI.hitl.badge.textContent = 'AI Scored';
     UI.hitl.badge.className = 'hitl-badge';
     UI.hitl.status.hidden = true;
-    if (audit.hitl_review_required) {
+    [UI.hitl.approveBtn, UI.hitl.flagBtn, UI.hitl.rejectBtn].forEach(b => b.disabled = false);
+
+    if (audit._hitl) {
+        AppState.hitlStatus = audit._hitl.status;
+        UI.hitl.badge.textContent = audit._hitl.status.charAt(0).toUpperCase() + audit._hitl.status.slice(1);
+        UI.hitl.badge.className = 'hitl-badge ' + { approved: 'badge-green', flagged: 'badge-warn', rejected: 'badge-red' }[audit._hitl.status];
+        UI.hitl.status.hidden = false;
+        UI.hitl.status.textContent = `Recorded: ${audit._hitl.msg}`;
+        UI.hitl.status.className = `hitl-status ${audit._hitl.type}`;
+        [UI.hitl.approveBtn, UI.hitl.flagBtn, UI.hitl.rejectBtn].forEach(b => b.disabled = true);
+    } else if (audit.hitl_review_required) {
         UI.hitl.badge.textContent = 'Review Required';
         UI.hitl.badge.className = 'hitl-badge badge-warn';
         notify('Supervisor review recommended for this audit.', 'warning');
@@ -618,6 +698,12 @@ function handleHitl(status, msg, type) {
     UI.hitl.status.textContent = `Recorded: ${msg}`;
     UI.hitl.status.className = `hitl-status ${type}`;
     [UI.hitl.approveBtn, UI.hitl.flagBtn, UI.hitl.rejectBtn].forEach(b => b.disabled = true);
+
+    // Persist HITL decision into the current audit and memory
+    if (AppState.lastAudit) {
+        AppState.lastAudit._hitl = { status, msg, type };
+        localStorage.setItem('brieflyqa_history', JSON.stringify(AppState.history));
+    }
     notify(msg, type);
 }
 
