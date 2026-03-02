@@ -92,7 +92,7 @@ def transcribe_via_hf_space(audio_path: str) -> dict:
     print("--- [HF Space] Connecting to Qualora ASR node ---")
     client = GradioClient(
         HF_SPACE_URL,
-        hf_token=HF_SPACE_TOKEN if HF_SPACE_TOKEN else None,
+        token=HF_SPACE_TOKEN if HF_SPACE_TOKEN else None,
     )
 
     raw = client.predict(
