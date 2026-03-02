@@ -490,12 +490,15 @@ function renderEmotionTopography(timeline) {
         'Happy': '#059669',  // Medium arousal, highly positive valence
     };
 
-    const speakers = ['Customer', 'Agent'];
+    // Dynamically discover all unique speakers in the timeline
+    let speakers = Array.from(new Set(timeline.map(t => t.speaker || 'Unknown')));
+    if (speakers.length === 0) speakers = ['Customer', 'Agent']; // Fallback
+
     const maxTurns = timeline.length;
 
     // Build bar3D data — each entry represents one speaker turn
     const barData = timeline.map((t, i) => {
-        const speakerIdx = (t.speaker === 'Agent') ? 1 : 0;
+        const speakerIdx = speakers.indexOf(t.speaker || 'Unknown');
         const color = EMOTION_COLORS[t.emotion] || '#94A3B8';
         const intensity = Math.min(Math.max(t.intensity || 1, 1), 10); // clamp 1–10
         return {
