@@ -8,31 +8,6 @@ import wave
 import struct
 import math
 
-# --- Utilities to create sample files ---
-def create_sample_audio(filename="sample.wav", duration=2.0, sample_rate=16000):
-    """Generates a simple sine wave audio file to test ASR/acoustic processing."""
-    print(f"Generating sample audio: {filename}")
-    with wave.open(filename, 'w') as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        
-        freq = 440.0 # A4 note
-        n_samples = int(duration * sample_rate)
-        for i in range(n_samples):
-            t = float(i) / sample_rate
-            value = int(32767.0 * math.sin(2.0 * math.pi * freq * t))
-            data = struct.pack('<h', value)
-            wav_file.writeframesraw(data)
-
-def create_sample_text(filename="sample.txt"):
-    """Generates a dummy text file."""
-    print(f"Generating sample text file: {filename}")
-    with open(filename, 'w') as f:
-        f.write("SPEAKER_00: Hello, how can I help you today?\n")
-        f.write("SPEAKER_01: My account is locked and I am very angry. Fix it immediately.\n")
-        f.write("SPEAKER_00: I understand you are frustrated. Let me check your account details to help resolve this.")
-
 def assert_success(condition, message):
     if not condition:
         print(f"❌ FAILED: {message}")
@@ -61,24 +36,30 @@ def test_process_chat(base_url):
 
 def test_process_file(base_url):
     print("\n--- Testing /api/process-file ---")
-    create_sample_text("test_audit.txt")
-    with open("test_audit.txt", "rb") as f:
-        files = {"file": ("test_audit.txt", f, "text/plain")}
+    file_path = os.path.join("datasets", "human_chat.txt")
+    if not os.path.exists(file_path):
+        print(f"⚠️ SKIPPED: Missing {file_path}")
+        return
+        
+    with open(file_path, "rb") as f:
+        files = {"file": ("human_chat.txt", f, "text/plain")}
         res = requests.post(f"{base_url}/api/process-file", files=files)
         assert_success(res.status_code == 200, "Process-file endpoint returned 200")
         data = res.json()
         assert_success(data.get('success'), "File audit was successful")
         assert_success('audit' in data, "Audit content present")
         print("File Audit Summary:", data['audit'].get('summary'))
-    os.remove("test_audit.txt")
 
 def test_call_audit_flow(base_url):
     print("\n--- Testing Call Audit Flow (Upload -> Status Polling) ---")
-    create_sample_audio("test_call.wav")
+    file_path = os.path.join("datasets", "call log 1.m4a")
+    if not os.path.exists(file_path):
+        print(f"⚠️ SKIPPED: Missing {file_path}")
+        return
     
     # Upload Audio
-    with open("test_call.wav", "rb") as f:
-        files = {"audio": ("test_call.wav", f, "audio/wav")}
+    with open(file_path, "rb") as f:
+        files = {"audio": ("call log 1.m4a", f, "audio/mp4")}
         res = requests.post(f"{base_url}/api/start-call-audit", files=files)
         assert_success(res.status_code == 200, "Start call audit returned 200")
         data = res.json()
@@ -115,15 +96,16 @@ def test_call_audit_flow(base_url):
     if attempt >= max_attempts:
         assert_success(False, "Call audit polling timed out")
 
-    os.remove("test_call.wav")
-
 def test_fast_track_flow(base_url):
     print("\n--- Testing Call Audit Flow (Fast Track / Transcribe Now) ---")
-    create_sample_audio("test_call_fast_track.wav")
+    file_path = os.path.join("datasets", "call log 2.m4a")
+    if not os.path.exists(file_path):
+        print(f"⚠️ SKIPPED: Missing {file_path}")
+        return
     
     # Upload Audio
-    with open("test_call_fast_track.wav", "rb") as f:
-        files = {"audio": ("test_call_fast_track.wav", f, "audio/wav")}
+    with open(file_path, "rb") as f:
+        files = {"audio": ("call log 2.m4a", f, "audio/mp4")}
         res = requests.post(f"{base_url}/api/start-call-audit", files=files)
         assert_success(res.status_code == 200, "Start call audit returned 200")
         data = res.json()
@@ -156,8 +138,6 @@ def test_fast_track_flow(base_url):
             break
             
         time.sleep(poll_interval)
-    
-    os.remove("test_call_fast_track.wav")
 
 def run_all(base_url):
     print(f"Starting E2E Tests on {base_url}\n")
