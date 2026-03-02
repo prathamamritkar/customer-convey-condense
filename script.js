@@ -448,125 +448,157 @@ function renderRadarChart(qm) {
     });
 }
 
-// ── CHART: 3D Emotional Landscape Topography (Apache ECharts GL) ──────────
+
+// ── CHART: 3D Emotional Landscape — bar3D Mountain Peaks (Apache ECharts GL) ─
+// Scientific basis:
+//   • Russell's Circumplex Model of Affect (1980) — arousal × valence → color
+//   • Plutchik's Wheel of Emotions (1980) — hierarchical emotion structure
+//   • Z-axis (height) = Emotional Intensity (1–10, linear, LLM-assigned)
+//   • X-axis = Chronological Turn Index (discrete, time-ordered)
+//   • Y-axis = Speaker lane (Customer=0, Agent=1)
+//   • Bar color = Emotion type → psychological valence mapping
+//   Each bar is a 1:1 representation of one conversation turn. No interpolation.
 function renderEmotionTopography(timeline) {
     const container = document.getElementById('emotionTopographyChart');
     if (!container) return;
 
     if (_echartsInstance) { _echartsInstance.dispose(); _echartsInstance = null; }
 
-    if (!timeline.length) {
-        container.innerHTML = '<div class="chart-empty">No emotional timeline data available.</div>';
+    if (!timeline || !timeline.length) {
+        container.innerHTML = '<div class="chart-empty">No emotional timeline data available for this interaction.</div>';
         return;
     }
 
-    _echartsInstance = echarts.init(container);
+    _echartsInstance = echarts.init(container, null, { renderer: 'webgl' });
 
-    // Map emotions to numeric intensity values for Z-axis
-    const emotionMap = {
-        'Angry': -3, 'Frustrated': -2, 'Anxious': -1, 'Confused': -0.5,
-        'Neutral': 0, 'Professional': 0.5,
-        'Calm': 1, 'Empathetic': 1.5, 'Relieved': 2, 'Satisfied': 2.5, 'Happy': 3
+    // ── Psychological Emotion→Color Map ────────────────────────────────────
+    // Based on Russell (1980): valence (positive/negative) + arousal (high/low)
+    // High arousal + negative valence → warm red spectrum (sympathetic nervous system)
+    // Low arousal  + positive valence → cool green spectrum (parasympathetic)
+    // Neutral                         → slate (no strong valence bias)
+    const EMOTION_COLORS = {
+        'Angry': '#EF4444',  // High arousal, highly negative (threat response)
+        'Frustrated': '#F97316',  // High arousal, negative
+        'Anxious': '#FB923C',  // High arousal, slightly negative
+        'Confused': '#FBBF24',  // Medium arousal, mildly negative
+        'Neutral': '#94A3B8',  // Low arousal, neutral valence (baseline)
+        'Professional': '#38BDF8',  // Low arousal, slightly positive
+        'Calm': '#34D399',  // Low arousal, positive (parasympathetic state)
+        'Empathetic': '#22C55E',  // Medium arousal, positive
+        'Relieved': '#4ADE80',  // Decreasing arousal, clearly positive
+        'Satisfied': '#10B981',  // Low arousal, highly positive
+        'Happy': '#059669',  // Medium arousal, highly positive valence
     };
 
-    // Build a 2D grid: X = turn index, Y = speaker (0=Customer, 1=Agent)
-    const turns = timeline.length;
-    const data = [];
+    const speakers = ['Customer', 'Agent'];
+    const maxTurns = timeline.length;
 
-    timeline.forEach((t, i) => {
-        const yVal = t.speaker === 'Customer' ? 0 : 1;
-        const zBase = emotionMap[t.emotion] ?? 0;
-        const z = zBase + (t.intensity / 10) * 2; // scale intensity
-        data.push([i, yVal, z]);
+    // Build bar3D data — each entry represents one speaker turn
+    const barData = timeline.map((t, i) => {
+        const speakerIdx = (t.speaker === 'Agent') ? 1 : 0;
+        const color = EMOTION_COLORS[t.emotion] || '#94A3B8';
+        const intensity = Math.min(Math.max(t.intensity || 1, 1), 10); // clamp 1–10
+        return {
+            value: [i, speakerIdx, intensity],
+            _turn: t,   // retain for tooltip
+            itemStyle: { color, opacity: 0.93 }
+        };
     });
+
+    // Auto-scale bar width: wider for short calls, narrower for long calls
+    const barSize = Math.max(1.2, Math.min(5, 60 / maxTurns));
 
     const option = {
         backgroundColor: 'transparent',
         tooltip: {
+            show: true,
+            confine: true,
             formatter: params => {
-                if (params.data) {
-                    const turn = timeline[params.data[0]] || {};
-                    return `Turn ${turn.turn || params.data[0] + 1}<br/>${turn.speaker}: <b>${turn.emotion}</b><br/>Intensity: ${turn.intensity}/10`;
-                }
+                const t = params.data?._turn || {};
+                const emotionColor = EMOTION_COLORS[t.emotion] || '#94A3B8';
+                return `<div style="font:12px/1.8 Inter,sans-serif;min-width:160px">
+                    <b>Turn ${t.turn ?? (params.data.value[0] + 1)}</b><br/>
+                    <span style="color:${emotionColor}">●</span> <b>${t.speaker || '—'}</b><br/>
+                    Emotion: <b>${t.emotion || '—'}</b><br/>
+                    Intensity: <b>${t.intensity ?? params.data.value[2]}</b> / 10
+                </div>`;
             }
         },
         grid3D: {
-            boxWidth: 120,
-            boxDepth: 40,
-            boxHeight: 60,
+            boxWidth: 150,
+            boxDepth: 45,
+            boxHeight: 100,
             viewControl: {
                 autoRotate: false,
-                rotateSensitivity: 1.5,
+                rotateSensitivity: 2,
                 zoomSensitivity: 1.2,
-                beta: 20,
-                alpha: 25,
+                panSensitivity: 1,
+                alpha: 20,     // tilt angle
+                beta: -10,     // rotation angle — slight offset to show both speaker lanes
+                distance: 190,
             },
             light: {
-                main: { intensity: 1.5 },
-                ambient: { intensity: 0.4 }
+                main: {
+                    intensity: 2.4,
+                    shadow: true,
+                    shadowQuality: 'high',
+                    alpha: 40,
+                    beta: 35,
+                },
+                ambient: { intensity: 0.3 }
             },
-            environment: 'none',
+            postEffect: {
+                enable: true,
+                SSAO: { enable: true, quality: 'medium', radius: 3 }
+            },
         },
         xAxis3D: {
-            name: 'Call Turn',
+            name: 'Turn #',
             type: 'value',
             min: 0,
-            max: turns,
-            nameTextStyle: { color: '#94A3B8', fontSize: 11 },
-            axisLabel: { color: '#94A3B8', fontSize: 9 },
-            axisLine: { lineStyle: { color: '#334155' } },
-            splitLine: { lineStyle: { color: 'rgba(148,163,184,0.1)' } },
+            max: maxTurns,
+            nameTextStyle: { color: '#64748B', fontSize: 10 },
+            axisLabel: { color: '#64748B', fontSize: 9 },
+            axisLine: { lineStyle: { color: '#1E293B' } },
+            splitLine: { lineStyle: { color: 'rgba(30,41,59,0.7)', width: 0.5 } },
         },
         yAxis3D: {
             name: 'Speaker',
             type: 'category',
-            data: ['Customer', 'Agent'],
-            nameTextStyle: { color: '#94A3B8', fontSize: 11 },
-            axisLabel: { color: '#94A3B8', fontSize: 10 },
-            axisLine: { lineStyle: { color: '#334155' } },
+            data: speakers,
+            nameTextStyle: { color: '#64748B', fontSize: 10 },
+            axisLabel: { color: '#64748B', fontSize: 10 },
+            axisLine: { lineStyle: { color: '#1E293B' } },
+            splitLine: { show: false },
         },
         zAxis3D: {
-            name: 'Emotional State',
+            name: 'Intensity',
             type: 'value',
-            min: -4,
-            max: 5,
-            nameTextStyle: { color: '#94A3B8', fontSize: 11 },
-            axisLabel: { color: '#94A3B8', fontSize: 9 },
-            axisLine: { lineStyle: { color: '#334155' } },
-            splitLine: { lineStyle: { color: 'rgba(148,163,184,0.1)' } },
-        },
-        visualMap: {
-            show: true,
-            dimension: 2,
-            min: -4,
-            max: 5,
-            inRange: {
-                color: ['#EF4444', '#F97316', '#EAB308', '#22C55E', '#6366F1']
-            },
-            textStyle: { color: '#94A3B8', fontSize: 9 },
-            left: 'left',
-            bottom: 10,
+            min: 0,
+            max: 10,
+            interval: 2,
+            nameTextStyle: { color: '#64748B', fontSize: 10 },
+            axisLabel: { color: '#64748B', fontSize: 9, formatter: v => v },
+            axisLine: { lineStyle: { color: '#1E293B' } },
+            splitLine: { lineStyle: { color: 'rgba(30,41,59,0.7)', width: 0.5 } },
         },
         series: [{
-            type: 'scatter3D',
-            data,
-            symbolSize: 14,
-            itemStyle: {
-                opacity: 0.9,
-                borderColor: 'rgba(255,255,255,0.2)',
-                borderWidth: 1,
-            },
+            type: 'bar3D',
+            data: barData,
+            shading: 'lambert',     // Lambert = physically accurate diffuse light model
+            barSize,
+            label: { show: false },
             emphasis: {
-                itemStyle: { opacity: 1 },
-                label: { show: false }
-            }
+                label: { show: false },
+                itemStyle: { opacity: 1 }
+            },
         }]
     };
 
     _echartsInstance.setOption(option);
 
-    // Resize on container resize
-    const ro = new ResizeObserver(() => _echartsInstance && _echartsInstance.resize());
+    // Respond to container resize (e.g. window resize, panel change)
+    const ro = new ResizeObserver(() => { if (_echartsInstance) _echartsInstance.resize(); });
     ro.observe(container);
 }
 

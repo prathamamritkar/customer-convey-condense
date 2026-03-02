@@ -69,18 +69,27 @@ VERCEL_SAFE_AUDIO_MB = 4.0  # ~4 min of 128kbps MP3
 # SECTION 1 — HF SPACE NODE (WhisperX + pyannote acoustic diarization)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def transcribe_via_hf_space(audio_path: str) -> str:
+def transcribe_via_hf_space(audio_path: str) -> dict:
     """
-    Submits audio to the HuggingFace Space (briefly-asr-node).
-    The Space runs:  faster-whisper-large-v3  +  pyannote/speaker-diarization-3.1
-    Returns speaker-labelled transcript string on success, raises on failure.
+    Submits audio to the HuggingFace Space (Qualora ASR node).
+    The Space runs:
+      faster-whisper-large-v3  — transcription with word timestamps
+      pyannote/speaker-diarization-3.1 — ECAPA-TDNN acoustic voiceprint clustering
+      parselmouth (Praat)      — pitch, intensity, jitter per turn
+      speechbrain wav2vec2     — acoustic emotion per speaker turn
+
+    Returns dict with keys:
+      transcript       — speaker-labelled full transcript string
+      speaker_profiles — acoustic profile per speaker (avg pitch, intensity, dominant emotion)
+      turns            — per-turn structs with prosody + emotion
+    Raises on failure.
     """
     if not GRADIO_CLIENT_AVAILABLE:
         raise RuntimeError("gradio_client package not installed.")
     if not HF_SPACE_URL:
         raise RuntimeError("HF_SPACE_URL env var not set — HF node not configured.")
 
-    print("--- [HF Space] Connecting to ASR node ---")
+    print("--- [HF Space] Connecting to Qualora ASR node ---")
     client = GradioClient(
         HF_SPACE_URL,
         hf_token=HF_SPACE_TOKEN if HF_SPACE_TOKEN else None,
@@ -91,16 +100,17 @@ def transcribe_via_hf_space(audio_path: str) -> str:
         api_name="/predict",
     )
 
-    # Gradio returns the function's return value — may be dict or JSON string
+    # Gradio may return dict or JSON string
     if isinstance(raw, dict):
         data = raw
     elif isinstance(raw, str):
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            return raw  # plain text transcript returned directly
+            # Plain text fallback — wrap in standard dict
+            return {"transcript": raw.strip(), "speaker_profiles": {}, "turns": []}
     else:
-        return str(raw)
+        data = {"transcript": str(raw), "speaker_profiles": {}, "turns": []}
 
     if "error" in data:
         raise RuntimeError(f"HF Space returned error: {data['error']}")
@@ -109,8 +119,13 @@ def transcribe_via_hf_space(audio_path: str) -> str:
     if not transcript:
         raise RuntimeError("HF Space returned empty transcript.")
 
-    print("✅ [HF Space] Transcription complete.")
-    return transcript
+    nodes = data.get("pipeline_nodes", ["faster-whisper"])
+    print(f"✅ [HF Space] Done. Pipeline: {' → '.join(nodes)}")
+    return {
+        "transcript":       transcript,
+        "speaker_profiles": data.get("speaker_profiles", {}),
+        "turns":            data.get("turns", []),
+    }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 2 — API CHAIN NODE (ElevenLabs → Deepgram [FIXED] → Groq)
@@ -273,91 +288,134 @@ def perform_voice_capture_apis(audio_path: str) -> str:
     raise RuntimeError("All API-chain transcription providers failed or are unconfigured.")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SECTION 3 — COMPETITIVE EXECUTION ENGINE
-# "The Winner Stays" — both nodes fire simultaneously; first valid result wins.
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 3 — ASYNC JOB ENGINE
+# HF Space fires first. UI shows "Transcribe Now" if API chain is available.
+# User can click it to start API chain simultaneously.
+# First valid transcript wins — the other thread is abandoned.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def competitive_transcribe(audio_path: str, file_size_bytes: int) -> tuple[str, str]:
-    """
-    Fires HF Space node and API-chain node simultaneously in separate threads.
-    Returns (transcript_string, source_label) for whichever responds first
-    with a valid non-empty result within the dynamic timeout.
+import uuid
 
-    Dynamic timeout scales with file size:
-        - API chain target window:  ~15–30 s  (fast, network-bound)
-        - HF Space target window:   ~45–120 s (slow warm, but more capable)
-        - Overall wait:             max of both (up to 120 s)
+_jobs: dict = {}   # job_id -> job dict
 
-    On Vercel (IS_VERCEL=True): function timeout is 60 s (set in vercel.json).
-    For files above VERCEL_SAFE_AUDIO_MB on Vercel, only the HF Space is tried
-    (the API-chain upload itself would approach the Vercel body-size limit).
-    """
-    file_size_mb   = file_size_bytes / (1024 * 1024)
-    overall_timeout = min(max(file_size_mb * 5, 45), 90)  # 45–90 s window
-    
-    # On Vercel with large file: skip API-chain (body too big for serverless)
-    vercel_large_file = IS_VERCEL and file_size_mb > VERCEL_SAFE_AUDIO_MB
 
-    winner = {"transcript": None, "source": None}
-    event  = threading.Event()
-    lock   = threading.Lock()
+def _get_fallbacks_available() -> list:
+    """Return list of configured API-chain providers."""
+    out = []
+    if ELEVENLABS_API_KEY: out.append("elevenlabs")
+    if DEEPGRAM_API_KEY:   out.append("deepgram")
+    if GROQ_API_KEY:       out.append("groq")
+    return out
 
-    def _attempt(fn, label):
+
+def _clean_old_jobs():
+    import time
+    cutoff = time.time() - 1800  # 30-minute TTL
+    stale  = [k for k, v in list(_jobs.items()) if v.get("_ts", 0) < cutoff]
+    for k in stale:
+        _jobs.pop(k, None)
+
+
+def _run_api_chain_for_job(job_id: str):
+    """Starts the API-chain fallback (ElevenLabs → Deepgram → Groq) for a job."""
+    import time
+    job = _jobs.get(job_id)
+    if not job or job.get("api_chain_started"):
+        return
+    job["api_chain_started"] = True
+
+    def _run():
         try:
-            result = fn(audio_path)
-            if result and result.strip():
-                with lock:
-                    if not event.is_set():
-                        winner["transcript"] = result
-                        winner["source"]     = label
-                        event.set()
-                        print(f"🏆 [Competitive] Winner: {label}")
+            tx = perform_voice_capture_apis(job["_filepath"])
+            tx = (tx or "").strip()
+            if tx and not job["winner"].is_set():
+                job["transcript"] = tx
+                job["source"]     = "api_chain"
+                job["winner"].set()
+                print(f"[Job {job_id[:8]}] API chain won.")
         except Exception as e:
-            print(f"[{label}] node failed: {e}")
+            print(f"[Job {job_id[:8]}] API chain failed: {e}")
+            if not job["winner"].is_set():
+                job["winner"].set()  # unblock the audit watcher
 
-    threads = []
+    threading.Thread(target=_run, daemon=True, name=f"api-{job_id[:8]}").start()
 
-    # Always launch HF Space thread if configured
+
+def _start_job(audio_filepath: str) -> dict:
+    """
+    Creates and starts an async transcription job.
+    Returns the job dict (including job_id).
+    """
+    import time
+    job_id = uuid.uuid4().hex
+    job = {
+        "job_id":            job_id,
+        "_ts":               time.time(),
+        "_filepath":         audio_filepath,
+        "status":            "hf_transcribing",
+        "transcript":        None,
+        "source":            None,
+        "acoustic_profile":  {},
+        "audit":             None,
+        "error":             None,
+        "api_chain_started": False,
+        "winner":            threading.Event(),
+    }
+    _jobs[job_id] = job
+    _clean_old_jobs()
+
+    # ── Thread 1: HF Space (primary) ──────────────────────────────────────────────
+    def _run_hf():
+        try:
+            result = transcribe_via_hf_space(audio_filepath)
+            tx  = result.get("transcript", "").strip()
+            apr = result.get("speaker_profiles", {})
+            if tx and not job["winner"].is_set():
+                job["transcript"]       = tx
+                job["acoustic_profile"] = apr
+                job["source"]           = "hf_space"
+                job["winner"].set()
+                print(f"[Job {job_id[:8]}] HF Space won.")
+        except Exception as e:
+            print(f"[Job {job_id[:8]}] HF Space failed: {e}")
+            # Auto-fallback to API chain if not already running
+            if not job["api_chain_started"] and not job["winner"].is_set():
+                _run_api_chain_for_job(job_id)
+
     if HF_SPACE_URL and GRADIO_CLIENT_AVAILABLE:
-        t = threading.Thread(
-            target=_attempt,
-            args=(transcribe_via_hf_space, "hf_space"),
-            daemon=True,
-        )
-        threads.append(t)
-
-    # Launch API-chain thread when safe to do so
-    if not vercel_large_file:
-        t = threading.Thread(
-            target=_attempt,
-            args=(perform_voice_capture_apis, "api_chain"),
-            daemon=True,
-        )
-        threads.append(t)
+        threading.Thread(target=_run_hf, daemon=True, name=f"hf-{job_id[:8]}").start()
     else:
-        print(f"⚠️  [Vercel] File {file_size_mb:.1f}MB > {VERCEL_SAFE_AUDIO_MB}MB threshold — "
-              "routing exclusively to HF Space node to avoid serverless timeout.")
+        # No HF Space configured — go straight to API chain
+        job["status"] = "api_transcribing"
+        _run_api_chain_for_job(job_id)
 
-    if not threads:
-        raise RuntimeError(
-            "No transcription nodes available — "
-            "configure at least one of: HF_SPACE_URL, ELEVENLABS_API_KEY, DEEPGRAM_API_KEY, GROQ_API_KEY."
-        )
+    # ── Audit watcher: activates once a transcript is ready ──────────────────────
+    def _audit_watcher():
+        job["winner"].wait(timeout=300)  # up to 5 min
+        if not job["transcript"]:
+            job["status"] = "error"
+            job["error"]  = "All transcription providers failed or timed out."
+            return
+        job["status"] = "auditing"
+        print(f"[Job {job_id[:8]}] Auditing via {job['source']}...")
+        try:
+            job["audit"]  = generate_quality_audit(
+                job["transcript"],
+                acoustic_profile=job["acoustic_profile"],
+            )
+            job["status"] = "done"
+        except Exception as e:
+            job["error"]  = str(e)
+            job["status"] = "error"
+        finally:
+            try: os.remove(audio_filepath)
+            except Exception: pass
 
-    for t in threads:
-        t.start()
+    threading.Thread(target=_audit_watcher, daemon=True, name=f"audit-{job_id[:8]}").start()
+    return job
 
-    event.wait(timeout=overall_timeout)
 
-    if winner["transcript"]:
-        return winner["transcript"], winner["source"]
-
-    raise RuntimeError(
-        f"All transcription nodes failed or timed out after {overall_timeout:.0f}s. "
-        "Check API keys and HF Space status."
-    )
-
-# ─────────────────────────────────────────────────────────────────────────────
 # SECTION 4 — QUALITY AUDIT ENGINE (Milestone 2 — LLM-as-a-Judge)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -395,7 +453,38 @@ Scoring guide:
 - behavioral_nudges: 2–4 specific tips. Ground them in psychology (e.g. reflective listening, cognitive reframing).
 - compliance_flags: empty array [] if none found."""
 
-def generate_quality_audit(transcript: str) -> dict:
+def _build_acoustic_context(speaker_profiles: dict) -> str:
+    """
+    Converts the HF Space acoustic profile dict into a plain-English preamble
+    for the LLM prompt. This grounds the NLP analysis in real signal-level evidence.
+    """
+    if not speaker_profiles:
+        return ""
+    lines = ["\n\n[ACOUSTIC SIGNAL ANALYSIS — from pyannote 3.1 + parselmouth + SpeechBrain wav2vec2]"]
+    for spk, profile in speaker_profiles.items():
+        pitch  = profile.get("avg_pitch_hz")
+        intens = profile.get("avg_intensity_db")
+        emo    = profile.get("dominant_emotion", "unknown")
+        turns  = profile.get("turn_count", 0)
+        # Interpret pitch relative to population baselines
+        # Male baseline ~120 Hz, Female baseline ~210 Hz; elevated pitch → stress
+        if pitch:
+            pitch_note = " (elevated — stress/anxiety signal)" if pitch > 260 else \
+                         " (depressed — fatigue/monotony signal)" if pitch < 100 else ""
+        else:
+            pitch_note = ""
+        line = f"  {spk}: avg_pitch={pitch:.0f}Hz{pitch_note}" if pitch else f"  {spk}:"
+        if intens:
+            line += f", avg_intensity={intens:.1f}dB"
+        line += f", dominant_acoustic_emotion={emo}, turn_count={turns}"
+        lines.append(line)
+    lines.append("Use these acoustic signals to enrich your scoring — especially cognitive_empathy, "
+                 "bias_reduction, and compliance_risk. Acoustic anger/frustration is ground-truth "
+                 "evidence, not NLP inferred.")
+    return "\n".join(lines)
+
+
+def generate_quality_audit(transcript: str, acoustic_profile: dict | None = None) -> dict:
     """
     LLM-as-a-Judge: Groq Llama-3.3-70b scores the support interaction.
     Returns a structured audit dict. Never raises — always returns a safe default on error.
@@ -420,49 +509,65 @@ def generate_quality_audit(transcript: str) -> dict:
         print("⚠️  [Audit] Groq client not configured — returning fallback.")
         return _FALLBACK
 
-    # Truncate very long transcripts to stay within Groq's context safely
-    MAX_CHARS = 80_000
+    import time
+
+    MAX_CHARS = 40_000          # reduced from 80k to cut token usage and rate-limit risk
     if len(transcript) > MAX_CHARS:
-        print(f"[Audit] Truncating transcript: {len(transcript)} → {MAX_CHARS} chars")
-        transcript = transcript[:MAX_CHARS] + "\n...[truncated]"
+        print(f"[Audit] Trimming transcript: {len(transcript)} → {MAX_CHARS} chars")
+        transcript = transcript[:MAX_CHARS] + "\n...[truncated for token limits]"
 
-    user_prompt = f"Transcript to audit:\n\n{transcript}\n\nReturn ONLY the JSON object."
+    # Inject acoustic context if available (from HF Space pipeline)
+    acoustic_ctx = _build_acoustic_context(acoustic_profile or {})
+    user_prompt  = f"Transcript to audit:{acoustic_ctx}\n\n{transcript}\n\nReturn ONLY the JSON object."
 
-    try:
-        print("--- [Audit] Groq Llama-3.3-70b (LLM-as-a-Judge) ---")
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": _AUDIT_SYSTEM_PROMPT},
-                {"role": "user",   "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.3,   # lower = more consistent scoring
-            max_tokens=2048,
-        )
-        raw = response.choices[0].message.content.strip()
-        audit = json.loads(raw)
-        print("✅ [Audit] Quality audit complete.")
+    for attempt in range(3):    # up to 3 tries with exponential backoff on rate-limit
+        try:
+            print(f"--- [Audit] Groq Llama-3.3-70b attempt {attempt+1}/3 ---")
+            response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": _AUDIT_SYSTEM_PROMPT},
+                    {"role": "user",   "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.3,
+                max_tokens=2048,
+            )
+            raw = response.choices[0].message.content.strip()
+            audit = json.loads(raw)
+            print("✅ [Audit] Quality audit complete.")
 
-        # Ensure all expected keys exist (defensive merge with fallback)
-        for key, val in _FALLBACK.items():
-            if key not in audit:
-                audit[key] = val
-        # Ensure quality_matrix sub-keys
-        qm = audit.get("quality_matrix", {})
-        for k, v in _FALLBACK["quality_matrix"].items():
-            if k not in qm:
-                qm[k] = v
-        audit["quality_matrix"] = qm
+            # Defensive merge: ensure all schema keys are present
+            for key, val in _FALLBACK.items():
+                if key not in audit:
+                    audit[key] = val
+            qm = audit.get("quality_matrix", {})
+            for k, v in _FALLBACK["quality_matrix"].items():
+                if k not in qm:
+                    qm[k] = v
+            audit["quality_matrix"] = qm
+            return audit
 
-        return audit
+        except json.JSONDecodeError as e:
+            print(f"⚠️  [Audit] JSON parse failed: {e}")
+            return _FALLBACK
 
-    except json.JSONDecodeError as e:
-        print(f"⚠️  [Audit] JSON parse failed: {e}")
-        return _FALLBACK
-    except Exception as e:
-        print(f"⚠️  [Audit] Groq call failed: {e}")
-        return _FALLBACK
+        except Exception as e:
+            err_str = str(e).lower()
+            if "rate_limit" in err_str or "rate limit" in err_str or "429" in err_str:
+                wait = 10 * (2 ** attempt)   # 10s, 20s, 40s
+                print(f"⚠️  [Audit] Rate limit hit (attempt {attempt+1}). Waiting {wait}s...")
+                time.sleep(wait)
+                if attempt == 2:
+                    rl_fallback = dict(_FALLBACK)
+                    rl_fallback["summary"] = "Audit queued — Groq rate limit reached. Please retry in ~1 minute."
+                    rl_fallback["behavioral_nudges"] = ["Groq API rate limit was reached. This is temporary — retry shortly."]
+                    return rl_fallback
+            else:
+                print(f"⚠️  [Audit] Groq call failed: {e}")
+                return _FALLBACK
+
+    return _FALLBACK
 
 
 
@@ -560,64 +665,141 @@ def process_file():
 @app.route('/api/process-call', methods=['POST'])
 def process_call():
     """
-    Process audio call via Competitive Execution:
-    HF Space (acoustic diarization) races API chain (ElevenLabs → Deepgram → Groq).
-    The first valid transcript wins.
-
-    [FIX #2] File size is checked before processing.
-    On Vercel with files > VERCEL_SAFE_AUDIO_MB, the request is routed exclusively
-    to the HF Space node to avoid the serverless 60-second timeout.
+    Legacy synchronous endpoint: HF Space first, then API chain fallback.
+    New clients should use /api/start-call-audit + /api/job/<id>/status instead.
     """
     try:
         if 'audio' not in request.files:
             return jsonify({'error': 'No audio file provided'}), 400
-
         audio_file = request.files['audio']
         if not audio_file.filename:
             return jsonify({'error': 'No file selected'}), 400
 
-        # Save to temp location
-        safe_name  = secure_filename(audio_file.filename)
-        filename   = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{safe_name}"
-        filepath   = os.path.join(UPLOAD_FOLDER, filename)
+        safe_name = secure_filename(audio_file.filename)
+        filename  = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{safe_name}"
+        filepath  = os.path.join(UPLOAD_FOLDER, filename)
         audio_file.save(filepath)
-        file_size  = os.path.getsize(filepath)
+        file_size = os.path.getsize(filepath)
 
-        # [FIX #2] — Runtime file-size guard
-        MAX_BYTES = 50 * 1024 * 1024  # 50 MB absolute ceiling
+        MAX_BYTES = 50 * 1024 * 1024
         if file_size > MAX_BYTES:
             os.remove(filepath)
-            return jsonify({
-                'error': f'File exceeds 50 MB ceiling ({file_size / 1e6:.1f} MB). '
-                         'Please compress or split the audio.'
-            }), 413
+            return jsonify({'error': f'File exceeds 50 MB ({file_size/1e6:.1f} MB).'}), 413
 
-        print(f"[process-call] {filename} ({file_size / 1e6:.2f} MB) — entering competitive engine")
+        print(f"[process-call] {filename} ({file_size/1e6:.2f} MB)")
 
-        # ── Competitive Execution ──────────────────────────────────────────
-        try:
-            transcription, source_node = competitive_transcribe(filepath, file_size)
-        finally:
+        # Waterfall: HF Space → API chain
+        transcription = source_node = None
+        acoustic_profile = {}
+
+        if HF_SPACE_URL and GRADIO_CLIENT_AVAILABLE:
             try:
-                os.remove(filepath)
-            except Exception:
-                pass
+                result = transcribe_via_hf_space(filepath)
+                transcription    = result.get("transcript", "").strip()
+                acoustic_profile = result.get("speaker_profiles", {})
+                source_node      = "hf_space"
+                print(f"[process-call] HF Space OK")
+            except Exception as e:
+                print(f"[process-call] HF Space failed, falling back: {e}")
 
-        # ── Quality Audit (Milestone 2) ────────────────────────────────────
-        print("[process-call] Running quality audit...")
-        audit = generate_quality_audit(transcription)
+        if not transcription:
+            transcription = perform_voice_capture_apis(filepath)
+            source_node   = "api_chain"
+
+        try: os.remove(filepath)
+        except Exception: pass
+
+        print(f"[process-call] Auditing (source: {source_node})...")
+        audit = generate_quality_audit(transcription, acoustic_profile=acoustic_profile)
 
         return jsonify({
-            'success':       True,
-            'type':          'call',
-            'transcription': transcription,
-            'audit':         audit,
-            'source_node':   source_node,   # "hf_space" | "api_chain"
-            'timestamp':     datetime.utcnow().isoformat() + 'Z',
+            'success':          True,
+            'type':             'call',
+            'transcription':    transcription,
+            'audit':            audit,
+            'source_node':      source_node,
+            'acoustic_profile': acoustic_profile,
+            'timestamp':        datetime.utcnow().isoformat() + 'Z',
         })
-
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/start-call-audit', methods=['POST'])
+def start_call_audit():
+    """
+    Starts an async transcription + audit job.
+    Returns immediately with {job_id, fallbacks_available}.
+    Client polls /api/job/<id>/status to track progress.
+    """
+    try:
+        if 'audio' not in request.files:
+            return jsonify({'error': 'No audio file provided'}), 400
+        audio_file = request.files['audio']
+        if not audio_file.filename:
+            return jsonify({'error': 'No file selected'}), 400
+
+        safe_name = secure_filename(audio_file.filename)
+        filename  = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{safe_name}"
+        filepath  = os.path.join(UPLOAD_FOLDER, filename)
+        audio_file.save(filepath)
+        file_size = os.path.getsize(filepath)
+
+        MAX_BYTES = 50 * 1024 * 1024
+        if file_size > MAX_BYTES:
+            os.remove(filepath)
+            return jsonify({'error': f'File exceeds 50 MB ({file_size/1e6:.1f} MB).'}), 413
+
+        print(f"[start-call-audit] {filename} ({file_size/1e6:.2f} MB)")
+        job = _start_job(filepath)
+
+        return jsonify({
+            'job_id':              job['job_id'],
+            'fallbacks_available': _get_fallbacks_available(),
+            'hf_active':          bool(HF_SPACE_URL and GRADIO_CLIENT_AVAILABLE),
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/job/<job_id>/status')
+def job_status(job_id):
+    """Poll for job progress. Returns status + full audit when done."""
+    job = _jobs.get(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found or expired.'}), 404
+
+    resp = {
+        'status':            job['status'],
+        'source':            job['source'],
+        'api_chain_started': job['api_chain_started'],
+        'error':             job['error'],
+    }
+    if job['status'] == 'done':
+        resp['transcript']       = job['transcript']
+        resp['audit']            = job['audit']
+        resp['acoustic_profile'] = job['acoustic_profile']
+    return jsonify(resp)
+
+
+@app.route('/api/job/<job_id>/transcribe-now', methods=['POST'])
+def transcribe_now(job_id):
+    """
+    User-triggered: starts the API-chain fallback while HF Space is still running.
+    First result (HF or API chain) wins.
+    """
+    job = _jobs.get(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found or expired.'}), 404
+    if job['winner'].is_set():
+        return jsonify({'message': 'Transcription already complete.'}), 200
+    if job['api_chain_started']:
+        return jsonify({'message': 'API chain already running.'}), 200
+
+    _run_api_chain_for_job(job_id)
+    job['status'] = 'api_transcribing'
+    providers     = _get_fallbacks_available()
+    return jsonify({'triggered': True, 'providers': providers})
 
 
 @app.route('/api/health')

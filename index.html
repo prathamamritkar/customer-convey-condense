@@ -273,6 +273,21 @@
             <div class="app-overlay-loader" id="loader" hidden>
                 <div class="m3-spinner"></div>
                 <p id="loader-text" class="loader-msg">Analyzing interaction...</p>
+
+                <!-- Transcribe Now panel — shown only during HF Space transcription -->
+                <div class="transcribe-now-panel" id="transcribe-now-panel" hidden>
+                    <div class="tnp-node-badge">
+                        <span class="material-symbols-rounded">hub</span>
+                        <span id="tnp-node-label">HF Space processing...</span>
+                    </div>
+                    <p class="tnp-hint" id="tnp-hint">HF Space acoustic diarization can take 30–90 s. Click below to
+                        start the API chain simultaneously — first result wins.</p>
+                    <button class="btn-transcribe-now" id="transcribe-now-btn" type="button" disabled>
+                        <span class="material-symbols-rounded">bolt</span>
+                        <span id="transcribe-now-label">Transcribe Now</span>
+                    </button>
+                    <p class="tnp-status" id="tnp-status" hidden></p>
+                </div>
             </div>
         </main>
 
@@ -281,7 +296,19 @@
         </footer>
     </div>
 
-    <script src="script.js?v=3.0"></script>
+    <!-- One-time stale-cache flush: remove old audit history that has fallback summaries -->
+    <script>
+        (function () {
+            try {
+                var h = JSON.parse(localStorage.getItem('brieflyqa_history') || '[]');
+                var clean = h.filter(function (e) {
+                    return e.audit && e.audit.summary && !e.audit.summary.includes('LLM engine offline');
+                });
+                localStorage.setItem('brieflyqa_history', JSON.stringify(clean));
+            } catch (e) { localStorage.removeItem('brieflyqa_history'); }
+        })();
+    </script>
+    <script src="script.js?v=3.1"></script>
 </body>
 
 </html>
