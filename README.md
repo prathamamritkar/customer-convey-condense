@@ -73,37 +73,51 @@ The **first thread to successfully return a full transcript wins** and locks the
 
 ```mermaid
 sequenceDiagram
+    autonumber
     participant UI as Browser (UI)
     participant API as Flask Backend
     participant HF as HF Space Node
     participant EXT as External APIs
     participant LLM as LLM Auditor
 
-    UI->>API: POST /api/start-call-audit
-    API-->>UI: job_id + metadata
+    UI->>API: POST /api/start-call-audit (Audio/Text)
+    API-->>UI: Returns job_id + metadata (hf_active, fallbacks)
     
-    par Parallel Execution ⚡
-        Note over API,HF: Thread A: HF Space (Free Tier)
+    Note over UI, API: UI begins async status polling / SSE
+
+    rect rgb(240, 248, 255)
+    par Thread A: HF Space (Free Tier)
+        Note over API,HF: Primary Audio Processing
         API->>HF: Stream audio file
-        HF->>HF: faster-whisper + pyannote diarization
+        HF->>HF: faster-whisper + pyannote + speechbrain
         HF-->>API: ✓ Transcript + acoustic_profile
-    and
-        Note over API,EXT: Thread B: API Fallback Waterfall
+    and Thread B: API Fallback Waterfall
+        Note over API,EXT: Commercial API Fallback Sequence
         API->>EXT: 1️⃣ Try ElevenLabs Scribe
         EXT-->>API: ✗ Failed or Timeout
         API->>EXT: 2️⃣ Try Deepgram Nova-2
         EXT-->>API: ✗ Failed or Timeout
-        API->>EXT: 3️⃣ Try Groq (Last Resort)
+        API->>EXT: 3️⃣ Try Groq (Whisper-large-v3)
         EXT-->>API: ✓ Transcript received
     end
+    end
     
-    Note over API: 🏁 FIRST SUCCESS WINS — Loser thread cancelled
+    Note over API: 🏁 FIRST SUCCESS WINS<br/>Loser thread cancelled
     
-    API->>LLM: Process winner's transcript + acoustic context
+    API->>LLM: Prompt with Transcript + Acoustic Context
+    Note over LLM: LLM Cascade Execution<br/>(T1: Llama 3.3 70B → T4: Gemini)
     LLM-->>API: Audit matrix (JSON)
     
-    UI->>API: Poll /api/job/job_id/status
-    API-->>UI: ✓ DONE + full audit results
+    API->>API: Cache results (SHA-256 hash)
+    
+    loop Real-Time Updates
+        UI->>API: GET /api/job/<job_id>/status
+        alt Job Still Processing
+            API-->>UI: ⏳ Status: hf_transcribing / pending
+        else Job Complete
+            API-->>UI: ✓ Status: done + Full Audit Results
+        end
+    end
 ```
 ---
 
