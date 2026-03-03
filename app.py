@@ -1165,10 +1165,17 @@ def start_call_audit():
                 'hf_active':          hf_active,
             })
 
-            # Stay alive until done, error, or 290 s deadline
-            deadline = time.time() + 290
+            # Stay alive until done, error, or 290 s deadline.
+            # Emit an SSE comment ping every 15 s so Vercel's proxy / CDN
+            # layer does not close an idle keep-alive connection before the
+            # transcription or audit thread finishes.
+            deadline   = time.time() + 290
+            _last_ping = time.time()
             while time.time() < deadline:
                 time.sleep(2)
+                if time.time() - _last_ping >= 15:
+                    yield ': ping\n\n'   # SSE comment — ignored by clients
+                    _last_ping = time.time()
                 j = _jobs.get(job_id)
                 if not j:
                     yield _sse({'type': 'error', 'error': 'Job expired or not found.'})
