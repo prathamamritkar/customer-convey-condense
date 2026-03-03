@@ -291,28 +291,65 @@ async function processVoiceSignal() {
         const formData = new FormData();
         formData.append('audio', AppState.currentAudio);
 
-        // Vercel is stateless, kills background threads, and strictly enforces 10-60s timeouts (504).
-        // Since HF Space diarization takes 40-90s, Vercel will ALWAYS sever the connection with a 504 Gateway Timeout.
-        // Therefore, we automatically fast-track to the API chain when running on Vercel.
+        // Vercel handles long requests by severing the connection after maxDuration (60s).
+        // To respect the fallback hierarchy, we TRY the primary HF Space first.
+        // If HF Space doesn't finish within 50s, we programmatically abort it and 
+        // fallback to the fast API chain, preventing a hard unrecoverable 504 dead-end.
         if (AppState.isVercel) {
             UI.tnp.status.hidden = false;
-            UI.tnp.status.textContent = 'Vercel detected: Auto-routing to fast API chain to prevent 504 Timeout...';
+            UI.tnp.status.textContent = 'Processing directly on Vercel Node (primary)...';
+
+            UI.tnp.panel.hidden = false;
+            UI.tnp.btn.disabled = false;
+            let abortController = new AbortController();
+            let isFastTracked = false;
+
+            const triggerFallback = async (reason) => {
+                if (isFastTracked) return;
+                isFastTracked = true;
+                UI.tnp.btn.disabled = true;
+                UI.tnp.status.hidden = false;
+                UI.tnp.status.textContent = `${reason} — Engaging fast API fallback chain...`;
+                abortController.abort(); // Cancel the hanging primary fetch
+
+                try {
+                    abortController = new AbortController(); // fresh token
+                    const fastRes = await apiFetch('/process-call?fast_track=true', {
+                        method: 'POST', body: formData, signal: abortController.signal
+                    });
+                    finishProcessCall(fastRes);
+                } catch (e) {
+                    if (e.name !== 'AbortError') {
+                        UI.tnp.status.textContent = 'API Chain Failed: ' + e.message;
+                    }
+                }
+            };
+
+            UI.tnp.btn.onclick = () => triggerFallback('Fast-track activated');
 
             try {
-                // Append fast_track=true to immediately skip the HF Space queue
-                const res = await apiFetch('/process-call?fast_track=true', {
-                    method: 'POST', body: formData
+                // Attempt standard waterfall (HF Space first!)
+                // We wait indefinitely here on the client side. If Vercel issues a 504 
+                // Gateway Timeout for exceeding container limits, the catch block intercepts it.
+                const res = await apiFetch('/process-call', {
+                    method: 'POST', body: formData, signal: abortController.signal
                 });
                 finishProcessCall(res);
             } catch (e) {
-                if (e.message.includes('504')) {
-                    throw new Error('504 Gateway Timeout: Vercel killed the process before it could finish.');
+                // If we aborted it manually, ignore the error
+                if (e.name !== 'AbortError') {
+                    // If Vercel physically cut off the connection with 504 Timeout, seamlessly catch it and fallback.
+                    if (e.message.includes('504') || e.message.includes('Timeout')) {
+                        triggerFallback('Vercel Timeout intercepted');
+                    } else {
+                        throw e; // Standard 500 error / unhandled issue
+                    }
                 }
-                throw e;
             }
             return;
         }
 
+        // Standard backend polling approach for local / persistent servers
         const res = await apiFetch('/start-call-audit', { method: 'POST', body: formData });
         currentJobId = res.job_id;
 
@@ -948,7 +985,19 @@ function riskClass(r) {
 
 async function apiFetch(path, options = {}) {
     const res = await fetch(`${API_BASE_URL}${path}`, options);
-    const data = await res.json();
+
+    // Catch Vercel infrastructure timeouts directly before trying to parse HTML as JSON
+    if (res.status === 504) {
+        throw new Error('504 Gateway Timeout');
+    }
+
+    let data;
+    try {
+        data = await res.json();
+    } catch (e) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+
     if (!res.ok) throw new Error(data.error || 'Audit request failed.');
     return data;
 }
