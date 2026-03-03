@@ -44,7 +44,7 @@ Built for robustness, Qualora utilizes a **Distributed Hybrid Architecture**. Re
    Simultaneous execution across free-tier compute (HF Space) and premium APIs. Graceful degradation and zero single-point-of-failure.  
 
 3. ⚖️ **LLM-as-a-Judge Auditing**  
-   Evaluates conversations using Llama-3.3-70b to output a structured JSON matrix. Includes an Agent F1 Score, Emotional Timeline, HitL (Human-in-the-Loop) routing flags, and psychologically grounded behavioral nudges.
+   Evaluates conversations using Llama-3.3-70b (with an automatic failover to OpenRouter's highly-efficient Gemini 2.5 Flash pipeline) to output a structured JSON matrix. Includes an Agent F1 Score, Emotional Timeline, HitL (Human-in-the-Loop) routing flags, and psychologically grounded behavioral nudges.
 
 4. 📊 **Seamless UI & History Archive**  
    Vanilla JS frontend with an elegant, responsive design. Features real-time job polling, audio playback, and local history archiving.
@@ -145,6 +145,7 @@ sequenceDiagram
    ```env
    # LLM Auditor and Whisper Fallback
    GROQ_API_KEY=gsk_your_groq_key_here
+   OPENROUTER_API_KEY=sk-or-your_openrouter_key_here
    
    # API Transcription Fallbacks (Optional but recommended)
    ELEVENLABS_API_KEY=sk_your_elevenlabs_key_here

@@ -1,11 +1,25 @@
-# Don't upload these to Vercel
+# ── Never send to Vercel ─────────────────────────────────────────────────
 venv/
 __pycache__/
 *.pyc
 .env
 .git/
+
+# ── Runtime dirs ─────────────────────────────────────────────────────────
 uploads/
+
+# ── Venv folders ─────────────────────────────────────────────────────────
+Lib/
+Scripts/
+Include/
+share/
+pyvenv.cfg
+
+# ── Dev/test only ────────────────────────────────────────────────────────
 datasets/
+test_e2e.py
+hf_space/
+
+# ── Docs (keep README) ───────────────────────────────────────────────────
 *.md
 !README.md
-hf_space/

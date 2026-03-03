@@ -456,27 +456,36 @@ body {
 /* ── Textarea ────────────────────────────────────────────────────────── */
 .modern-textarea {
     width: 100%;
-    background: var(--md-surface-2);
-    border: 1.5px solid var(--md-outline);
-    border-radius: var(--md-corner-md);
-    color: var(--md-on-surface);
+    background: transparent;
+    border: 1.5px solid rgba(99, 102, 241, 0.4);
+    border-radius: var(--md-corner-lg);
+    color: var(--md-on-bg);
     font-family: inherit;
-    font-size: 0.9rem;
+    font-size: 0.875rem;
+    font-weight: 500;
     padding: var(--s3) var(--s4);
     resize: none;
     overflow: hidden;
     min-height: 80px;
-    transition: border-color var(--md-duration-short) var(--md-easing);
+    transition: border-color var(--md-duration-short) var(--md-easing),
+        background var(--md-duration-short) var(--md-easing);
+}
+
+.modern-textarea:hover {
+    background: var(--md-primary-container);
+    border-color: var(--md-primary);
 }
 
 .modern-textarea:focus {
     outline: none;
     border-color: var(--md-primary);
-    background: var(--md-surface-3);
+    background: var(--md-primary-container);
 }
 
 .modern-textarea::placeholder {
-    color: var(--md-on-surface-faint);
+    color: rgba(129, 140, 248, 0.55);
+    /* --md-primary-light at 55% — matches btn-outline tone */
+    font-weight: 400;
 }
 
 /* ── Buttons (MD3) ───────────────────────────────────────────────────── */
@@ -796,6 +805,33 @@ body {
 
 .flags-card {
     border-color: rgba(239, 68, 68, 0.18);
+}
+
+/* ── Section Heading (transcript + audio block headers) ───────────────── */
+.section-heading {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--md-on-bg);
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.section-heading .material-symbols-rounded {
+    font-size: 1.15rem;
+    color: var(--md-primary-light);
+    flex-shrink: 0;
+}
+
+/* ── Transcript container + Audio playback block ──────────────────────── */
+.transcription-container,
+.audio-playback-block {
+    padding: var(--s4);
+    background: rgba(30, 41, 59, 0.4);
+    border-radius: var(--md-corner-lg);
+    border: 1px solid var(--md-outline);
 }
 
 .detail-list {

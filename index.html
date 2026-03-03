@@ -7,7 +7,7 @@
     <title>Qualora &mdash; AI Customer Support Quality Auditor</title>
     <meta name="description"
         content="Qualora: GenAI-powered quality auditing platform. LLM scoring of empathy, compliance, and resolution effectiveness for customer support.">
-    <link rel="stylesheet" href="style.css?v=3.0">
+    <link rel="stylesheet" href="style.css?v=3.4">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
@@ -82,16 +82,12 @@
             <!-- Voice Audit Panel -->
             <section class="content-panel active" id="panel-call" role="tabpanel">
                 <div class="input-field-group">
-                    <label class="field-label" for="audio-input">
-                        <span class="material-symbols-rounded">audio_file</span>
-                        Upload Call Recording (.mp3, .wav, .m4a)
-                    </label>
                     <input type="file" id="audio-input" accept=".mp3,.wav,.m4a,.ogg,.webm,.mp4,audio/*" hidden>
                     <div class="upload-dropzone" id="dropzone" tabindex="0" role="button"
-                        aria-label="Upload audio call">
+                        aria-label="Upload audio recording">
                         <span class="material-symbols-rounded dropzone-icon">cloud_upload</span>
-                        <p class="dropzone-text">Drop call recording or <span class="highlight">browse files</span></p>
-                        <p class="dropzone-hint">Supports MP3, WAV, M4A · Max 50MB</p>
+                        <p class="dropzone-text">Drop audio recording or <span class="highlight">browse files</span></p>
+                        <p class="dropzone-hint">MP3, WAV, M4A, OGG &middot; Max 50MB</p>
                     </div>
                     <div class="file-chip" id="file-chip" hidden>
                         <span class="material-symbols-rounded">audio_file</span>
@@ -108,23 +104,20 @@
                 </div>
                 <button class="btn-primary" id="process-call-btn" type="button" disabled>
                     <span class="material-symbols-rounded">analytics</span>
-                    <span>Audit Call &amp; Score</span>
+                    <span>Audit &amp; Score</span>
                 </button>
             </section>
 
             <!-- Chat / Text Audit Panel -->
             <section class="content-panel" id="panel-chat" role="tabpanel">
                 <div class="input-field-group">
-                    <label class="field-label" for="chat-file-input">
-                        <span class="material-symbols-rounded">description</span>
-                        Upload Chat Log (.pdf, .txt, .json, .md)
-                    </label>
                     <input type="file" id="chat-file-input" accept=".txt,.csv,.json,.md,.log,.pdf" hidden>
                     <div class="upload-dropzone" id="chat-dropzone" tabindex="0" role="button"
                         aria-label="Upload chat log">
-                        <span class="material-symbols-rounded dropzone-icon">upload_file</span>
-                        <p class="dropzone-text">Drop chat log or <span class="highlight">browse source</span></p>
-                        <p class="dropzone-hint">PDF, TXT, JSON, Markdown</p>
+                        <span class="material-symbols-rounded dropzone-icon">cloud_upload</span>
+                        <p class="dropzone-text">Drop conversation log or <span class="highlight">browse files</span>
+                        </p>
+                        <p class="dropzone-hint">PDF, TXT, JSON, MD &middot; Max 10MB</p>
                     </div>
                     <div class="file-chip" id="chat-file-chip" hidden>
                         <span class="material-symbols-rounded">description</span>
@@ -135,11 +128,12 @@
                 </div>
                 <div class="input-field-group">
                     <textarea id="chat-input" class="modern-textarea"
-                        placeholder="Or paste chat transcript directly here..." rows="1"></textarea>
+                        placeholder="Paste chat log, support transcript, email thread, or any interaction text here..."
+                        rows="1"></textarea>
                 </div>
                 <button class="btn-primary" id="process-chat-btn" type="button">
                     <span class="material-symbols-rounded">fact_check</span>
-                    <span>Audit Chat &amp; Score</span>
+                    <span>Audit &amp; Score</span>
                 </button>
             </section>
 
@@ -223,14 +217,43 @@
                         </div>
                     </div>
 
-                    <!-- Row 5: Decoded Transcript (Progressive Disclosure) -->
-                    <details class="detail-accordion" id="transcription-block">
-                        <summary class="accordion-summary">
-                            <span class="material-symbols-rounded">transcribe</span>
-                            View Full Transcript
-                        </summary>
-                        <div class="detail-content" id="transcription-text"></div>
-                    </details>
+                    <!-- Row 5: Decoded Transcript / Document (Progressive Disclosure) -->
+                    <div id="transcription-container" hidden
+                        style="margin-top: 15px; padding: 15px; background: rgba(30, 41, 59, 0.4); border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.1);">
+                        <!-- Custom toggle header — matches audio block styling exactly -->
+                        <div style="display: flex; align-items: center; justify-content: space-between; cursor: pointer;"
+                            id="transcription-toggle"
+                            onclick="(function(){var t=document.getElementById('transcription-text'); var c=document.getElementById('transcription-chevron'); var v=t.hidden; t.hidden=!v; c.textContent=v?'expand_less':'expand_more';})()">
+                            <div
+                                style="display: flex; align-items: center; gap: 8px; color: #E2E8F0; font-weight: 600; font-size: 0.95rem;">
+                                <span class="material-symbols-rounded" style="color: #6366F1;">description</span>
+                                Interaction Transcript
+                                <span class="material-symbols-rounded" id="transcription-chevron"
+                                    style="color: #94A3B8; font-size: 1.1rem;">expand_more</span>
+                            </div>
+                            <button class="btn-secondary" id="download-transcript-btn" type="button"
+                                style="display: inline-flex; width: auto; align-items: center; gap: 6px; padding: 4px 10px; font-size: 0.85rem;"
+                                onclick="event.stopPropagation();">
+                                <span class="material-symbols-rounded" style="font-size: 1.1rem;">download</span>
+                                Download
+                            </button>
+                        </div>
+                        <div id="transcription-text" hidden
+                            style="margin-top: 15px; background: rgba(15, 23, 42, 0.6); padding: 12px; border-radius: 8px; max-height: 400px; overflow-y: auto; font-family: monospace; white-space: pre-wrap; font-size: 0.85rem; color: #CBD5E1;">
+                        </div>
+                    </div>
+
+                    <!-- Audio Playback -->
+                    <div class="audio-playback-block" id="audio-playback-block" hidden
+                        style="margin-top: 15px; padding: 15px; background: rgba(30, 41, 59, 0.4); border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.1);">
+                        <div
+                            style="margin-bottom: 12px; display: flex; align-items: center; gap: 8px; color: #E2E8F0; font-weight: 600; font-size: 0.95rem;">
+                            <span class="material-symbols-rounded" style="color: #6366F1;">play_circle</span>
+                            Audio Recording
+                        </div>
+                        <audio id="audio-player" controls
+                            style="width: 100%; border-radius: 8px; outline: none;"></audio>
+                    </div>
 
                     <!-- Row 6: HITL Override Panel -->
                     <div class="hitl-panel" id="hitl-panel">
@@ -303,7 +326,7 @@
             } catch (e) { localStorage.removeItem('brieflyqa_history'); }
         })();
     </script>
-    <script src="script.js?v=3.1"></script>
+    <script src="script.js?v=3.6"></script>
 </body>
 
 </html>

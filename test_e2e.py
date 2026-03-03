@@ -153,7 +153,7 @@ def run_all(base_url):
         sys.exit(1)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="End-to-End Tests for Qualora QA")
+    parser = argparse.ArgumentParser(description="End-to-End Tests for Qualora QA (Now with OpenRouter Fallback)")
     parser.add_argument("--url", default="http://localhost:5000", help="Base URL of the server (e.g. http://127.0.0.1:5000 or https://your-vercel.app)")
     args = parser.parse_args()
     
@@ -164,4 +164,5 @@ if __name__ == "__main__":
         print(f"❌ ERROR: Server at {args.url} is not unreachable. Please start the server first.")
         sys.exit(1)
 
+    print("Note: The backend now relies on a Groq → OpenRouter failover cascade for maximum reliability.")
     run_all(args.url)

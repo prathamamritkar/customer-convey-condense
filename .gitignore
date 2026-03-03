@@ -1,7 +1,7 @@
-# Environment variables
+# ── Environment ──────────────────────────────────────────────────────────
 .env
 
-# Python
+# ── Python venv (project root venv folders) ──────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -13,20 +13,26 @@ ENV/
 Lib/
 Scripts/
 Include/
+share/
+pyvenv.cfg
 
-# Uploads
+# ── Runtime uploads (temp, never commit) ─────────────────────────────────
 uploads/
 
-# IDE
+# ── IDE ───────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS
+# ── OS ────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 
-# HuggingFace Space — separate git repo, not a submodule of this project
+# ── HuggingFace Space ─────────────────────────────────────────────────────
+# hf_space is a separate git repo pushed independently; exclude its .git
 hf_space/.git/
 hf_space/genAI-qualityBot/
+
+# ── Keep datasets (audio + text test files must travel with the project) ──
+# datasets/ is NOT ignored — audio files inside are intentionally committed
