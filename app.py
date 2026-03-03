@@ -324,12 +324,25 @@ def _get_fallbacks_available() -> list:
     return out
 
 
+def _touch_job(job_id: str):
+    """Update job's access timestamp to prevent premature cleanup."""
+    import time
+    job = _jobs.get(job_id)
+    if job:
+        job['_ts'] = time.time()  # refresh timestamp on access
+        job['_last_activity'] = time.time()
+
+
 def _clean_old_jobs():
     import time
-    cutoff = time.time() - 1800  # 30-minute TTL
+    # Extend TTL to 120 minutes (7200s) to prevent loss during long HF Space processing
+    # and to ensure transcribe-now has time to complete after SSE stream ends
+    cutoff = time.time() - 7200
     stale  = [k for k, v in list(_jobs.items()) if v.get("_ts", 0) < cutoff]
     for k in stale:
-        _jobs.pop(k, None)
+        removed_job = _jobs.pop(k, None)
+        if removed_job:
+            print(f"[Cleanup] Removed stale job {k[:8]} (age: >2h)")
 
 
 def _run_api_chain_for_job(job_id: str):
@@ -365,9 +378,12 @@ def _start_job(audio_filepath: str) -> dict:
     """
     import time
     job_id = uuid.uuid4().hex
+    current_time = time.time()
     job = {
         "job_id":                job_id,
-        "_ts":                   time.time(),
+        "_ts":                   current_time,
+        "_created_at":           current_time,
+        "_last_activity":        current_time,
         "_filepath":             audio_filepath,
         "status":                "hf_transcribing",
         "transcript":            None,
@@ -380,6 +396,7 @@ def _start_job(audio_filepath: str) -> dict:
         "winner":                threading.Event(),
     }
     _jobs[job_id] = job
+    print(f"[Job {job_id[:8]}] Created. Total jobs in memory: {len(_jobs)}")
     _clean_old_jobs()
 
     # ── Thread 1: HF Space (primary) ──────────────────────────────────────────────
@@ -1176,6 +1193,10 @@ def start_call_audit():
                 if time.time() - _last_ping >= 15:
                     yield ': ping\n\n'   # SSE comment — ignored by clients
                     _last_ping = time.time()
+                
+                # Touch the job to keep it alive while SSE stream is active
+                _touch_job(job_id)
+                
                 j = _jobs.get(job_id)
                 if not j:
                     yield _sse({'type': 'error', 'error': 'Job expired or not found.'})
@@ -1235,7 +1256,11 @@ def job_status(job_id):
     """Poll for job progress. Returns status + full audit when done."""
     job = _jobs.get(job_id)
     if not job:
+        print(f"[job_status] Job {job_id[:8]} NOT FOUND")
         return jsonify({'error': 'Job not found or expired.'}), 404
+
+    # Touch the job to prevent cleanup while actively polling
+    _touch_job(job_id)
 
     resp = {
         'status':            job['status'],
@@ -1270,7 +1295,14 @@ def transcribe_now(job_id):
     """
     job = _jobs.get(job_id)
     if not job:
-        return jsonify({'error': 'Job not found or expired.'}), 404
+        # Debug: log available jobs to help diagnose issues
+        available_ids = list(_jobs.keys())[:5]  # show first 5 for debugging
+        print(f"[transcribe_now] Job {job_id[:8]} NOT FOUND. Available: {[j[:8] for j in available_ids]}")
+        return jsonify({'error': 'Job not found or expired.', 'debug_info': f'Available jobs: {len(_jobs)}'}), 404
+    
+    # Touch the job to prevent cleanup while request is in flight
+    _touch_job(job_id)
+    
     if job['winner'].is_set():
         return jsonify({'message': 'Transcription already complete.'}), 200
     if job['api_chain_started']:
@@ -1279,6 +1311,7 @@ def transcribe_now(job_id):
     _run_api_chain_for_job(job_id)
     job['status'] = 'api_transcribing'
     providers     = _get_fallbacks_available()
+    print(f"[transcribe_now] Job {job_id[:8]} fast-track triggered. Providers: {providers}")
     return jsonify({'triggered': True, 'providers': providers})
 
 
