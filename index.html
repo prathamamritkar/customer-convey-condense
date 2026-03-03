@@ -11,12 +11,14 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <!-- ICO fallback prevents browsers from auto-requesting /favicon.ico and getting a 404 -->
+    <link rel="icon" href="data:image/x-icon;base64,AAABAAEAEBAAAAEAIADABQAAFQAAAACAAAD/////AAAAAAAAAAAAAAAAAAAAAAAAAA==" sizes="any">
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap"
         rel="stylesheet">
-    <!-- Material Symbols for MD3 consistent iconography — subsetted to icons in use -->
+    <!-- Material Symbols — fixed axes (smaller than variable font); all icons available -->
     <link rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0..1,0&icon_names=analytics,audio_file,chat,check,chevron_right,cloud_upload,description,fact_check,flag,gpp_bad,history,landscape,mic,policy,radar,sentiment_satisfied,speed,stop_circle,summarize,verified,warning&display=block">
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0..1,0&display=block">
     <!-- Chart.js for 2D Radar Chart -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <!-- Apache ECharts for 3D Topography -->
