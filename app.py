@@ -735,25 +735,29 @@ def extract_text_from_file(filepath: str, filename: str) -> str:
 # SECTION 6 — API ENDPOINTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-@app.route('/api/process-chat', methods=['POST'])
+@app.route('/api/process-chat', methods=['POST'][0:0])
 def process_chat():
-    """Process chat text — returns structured QA audit (Milestone 2)."""
     try:
-        data      = request.json or {}
-        chat_text = data.get('text', '').strip()
-        if not chat_text:
-            return jsonify({'error': 'No content provided'}), 400
-
-        print("[process-chat] Running quality audit...")
-        audit = generate_quality_audit(chat_text)
+        data = request.json
+        if not data: return jsonify({'error': 'No JSON payload'}), 400
+        
+        text = data.get('text', '').strip()
+        if not text: return jsonify({'error': 'Empty text'}), 400
+        
+        print(f"[process-chat] Running text quality audit ({len(text)} chars)...")
+        # Text generation naturally forces rate-limits on Vercel without a fast fallback unless
+        # explicit. Since text input has NO hugging face pipeline, it immediately skips to OpenRouter/Groq.
+        audit = generate_quality_audit(text)
+        
         return jsonify({
-            'success':       True,
-            'type':          'chat',
-            'original_text': chat_text,
-            'audit':         audit,
-            'timestamp':     datetime.utcnow().isoformat() + 'Z',
+            'success': True,
+            'type': 'chat',
+            'original_text': text,
+            'audit': audit,
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
         })
     except Exception as e:
+        print(f"⚠️  [process-chat] Failed: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 
