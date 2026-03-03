@@ -89,19 +89,21 @@ sequenceDiagram
         HF->>HF: faster-whisper + pyannote + speechbrain
         HF-->>API: transcript + acoustic_profile
     and Thread B: API Fallback Chain
-        API->>Ext: ElevenLabs Scribe
-        Ext-->>API: transcript
+        API->>Ext: Try ElevenLabs Scribe
+        alt Success
+            Ext-->>API: transcript
+        else Failed
+            API->>Ext: Try Deepgram Nova-2
+            alt Success
+                Ext-->>API: transcript
+            else Failed
+                API->>Ext: Try Groq Whisper-large-v3
+                Ext-->>API: transcript
+            end
+        end
     end
     
-    Note over API,Ext: First successful thread wins; others abandoned
-    alt ElevenLabs failed
-        API->>Ext: Deepgram Nova-2
-        Ext-->>API: transcript
-    end
-    alt Deepgram failed
-        API->>Ext: Groq Whisper-large-v3
-        Ext-->>API: transcript
-    end
+    Note over API: First successful thread wins; other abandoned
     
     UI->>API: GET /api/job/&lt;job_id&gt;/status
     API-->>UI: { status, source, transcript, ... }
