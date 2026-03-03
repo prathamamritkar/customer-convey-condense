@@ -291,47 +291,24 @@ async function processVoiceSignal() {
         const formData = new FormData();
         formData.append('audio', AppState.currentAudio);
 
-        // Vercel is stateless and kills background threads, breaking the async polling pattern.
-        // It relies on the maxDuration synchronous endpoint.
+        // Vercel is stateless, kills background threads, and strictly enforces 10-60s timeouts (504).
+        // Since HF Space diarization takes 40-90s, Vercel will ALWAYS sever the connection with a 504 Gateway Timeout.
+        // Therefore, we automatically fast-track to the API chain when running on Vercel.
         if (AppState.isVercel) {
             UI.tnp.status.hidden = false;
-            UI.tnp.status.textContent = 'Processing directly on Vercel Node...';
-            // Show fast track button and wire up an explicit AbortController to cancel the hanging 
-            // HF Space wait and forcefully trigger a new accelerated API request.
-            UI.tnp.panel.hidden = false;
-            UI.tnp.btn.disabled = false;
-            let abortController = new AbortController();
-            let isFastTracked = false;
-
-            UI.tnp.btn.onclick = async () => {
-                if (isFastTracked) return;
-                isFastTracked = true;
-                UI.tnp.btn.disabled = true;
-                UI.tnp.status.hidden = false;
-                UI.tnp.status.textContent = 'Aborting HF Space wait... Engaging priority queue!';
-                abortController.abort(); // Cancel the synchronous fetch
-
-                try {
-                    abortController = new AbortController(); // fresh token
-                    const fastRes = await apiFetch('/process-call?fast_track=true', {
-                        method: 'POST', body: formData, signal: abortController.signal
-                    });
-                    finishProcessCall(fastRes);
-                } catch (e) {
-                    if (e.name !== 'AbortError') {
-                        UI.tnp.status.textContent = 'Fast-track failed: ' + e.message;
-                    }
-                }
-            };
+            UI.tnp.status.textContent = 'Vercel detected: Auto-routing to fast API chain to prevent 504 Timeout...';
 
             try {
-                const res = await apiFetch('/process-call', {
-                    method: 'POST', body: formData, signal: abortController.signal
+                // Append fast_track=true to immediately skip the HF Space queue
+                const res = await apiFetch('/process-call?fast_track=true', {
+                    method: 'POST', body: formData
                 });
                 finishProcessCall(res);
             } catch (e) {
-                // If the error was just us aborting it to fast-track, suppress it.
-                if (e.name !== 'AbortError') throw e;
+                if (e.message.includes('504')) {
+                    throw new Error('504 Gateway Timeout: Vercel killed the process before it could finish.');
+                }
+                throw e;
             }
             return;
         }
