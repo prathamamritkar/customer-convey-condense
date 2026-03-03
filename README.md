@@ -94,10 +94,10 @@ sequenceDiagram
         alt Scribe failed
             API->>Ext: Deepgram Nova-2
             Ext-->>API: transcript (or exception)
-        end
-        alt Deepgram failed
-            API->>Ext: Groq Whisper-large-v3
-            Ext-->>API: transcript
+            alt Deepgram failed
+                API->>Ext: Groq Whisper-large-v3
+                Ext-->>API: transcript
+            end
         end
     end
     
