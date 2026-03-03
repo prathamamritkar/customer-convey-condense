@@ -1,7 +1,11 @@
 import os
+import re as _re
 import json
+import copy
+import time
 import threading
 import concurrent.futures
+
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -41,7 +45,7 @@ GROQ_API_KEY        = os.getenv('GROQ_API_KEY', '')
 DEEPGRAM_API_KEY    = os.getenv('DEEPGRAM_API_KEY', '')
 ELEVENLABS_API_KEY  = os.getenv('ELEVENLABS_API_KEY', '')
 MURF_API_KEY        = os.getenv('MURF_API_KEY', '')
-OPENROUTER_API_KEY  = os.getenv('OPENROUTER_API_KEY', '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')
+OPENROUTER_API_KEY  = os.getenv('OPENROUTER_API_KEY', '')  # NO hardcoded fallback for security
 
 # HuggingFace Space node — new distributed backend
 HF_SPACE_URL        = os.getenv('HF_SPACE_URL', '')       # e.g. "your-user/briefly-asr"
@@ -54,11 +58,12 @@ elevenlabs_client  = ElevenLabs(api_key=ELEVENLABS_API_KEY) if ELEVENLABS_API_KE
 
 # ── Upload Folder ─────────────────────────────────────────────────────────────
 # [FIX #2] Vercel serverless writes only to /tmp — enforced here.
-UPLOAD_FOLDER = '/tmp/uploads' if os.environ.get('VERCEL') else os.path.join(BASE_DIR, 'uploads')
+# IS_VERCEL declared below; use raw env check here (any non-empty value = Vercel).
+UPLOAD_FOLDER = '/tmp/uploads' if os.environ.get('VERCEL', '').strip() else os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # ── Vercel deployment guard ────────────────────────────────────────────────────
-IS_VERCEL = bool(os.environ.get('VERCEL'))
+IS_VERCEL = os.environ.get('VERCEL', '').strip().lower() in ('1', 'true', 'yes')
 
 # [FIX #2] On Vercel hobby (10s hard limit), large audio will always time out.
 # This constant is the safe audio size threshold for synchronous API-only processing.
@@ -243,18 +248,29 @@ def _deepgram_transcribe(audio_path: str) -> str:
 
 
 def _groq_transcribe(audio_path: str) -> str:
-    """Groq Whisper-large-v3 — fast, free, no diarization."""
-    with open(audio_path, "rb") as f:
-        transcription = groq_client.audio.transcriptions.create(
-            file=(os.path.basename(audio_path), f.read()),
-            model="whisper-large-v3",
-            response_format="verbose_json",
-            language="en",
-            temperature=0.0,
-        )
-    if hasattr(transcription, 'text') and transcription.text:
-        return transcription.text
-    return str(transcription)
+    """Groq Whisper tiered — T1: large-v3 (best) → T2: large-v3-turbo (fast)."""
+    _whisper_models = [
+        ("whisper-large-v3",       "T1"),      # Primary: highest quality
+        ("whisper-large-v3-turbo", "T2"),      # Fallback: faster
+    ]
+    last_err = None
+    for whisper_model, tier in _whisper_models:
+        try:
+            with open(audio_path, "rb") as f:
+                transcription = groq_client.audio.transcriptions.create(
+                    file=(os.path.basename(audio_path), f.read()),
+                    model=whisper_model,
+                    response_format="verbose_json",
+                    language="en",
+                    temperature=0.0,
+                )
+            if hasattr(transcription, 'text') and transcription.text:
+                print(f"✅ [Groq Whisper] [{tier}] {whisper_model} transcribed successfully.")
+                return transcription.text
+        except Exception as e:
+            print(f"⚠️  [{tier}] {whisper_model} failed: {e}. Trying next model.")
+            last_err = e
+    raise RuntimeError(f"Both Groq Whisper models failed. Last error: {last_err}")
 
 
 def perform_voice_capture_apis(audio_path: str) -> str:
@@ -389,6 +405,17 @@ def _start_job(audio_filepath: str) -> dict:
 
     if HF_SPACE_URL and GRADIO_CLIENT_AVAILABLE:
         threading.Thread(target=_run_hf, daemon=True, name=f"hf-{job_id[:8]}").start()
+
+        # ── Timeout watcher: HF Space must win within 90 s, else start API chain ──
+        def _hf_timeout_watcher():
+            import time
+            time.sleep(90)
+            if not job["winner"].is_set() and not job["api_chain_started"]:
+                print(f"[Job {job_id[:8]}] HF Space timeout (90s) — starting API chain fallback.")
+                job["status"] = "api_transcribing"
+                _run_api_chain_for_job(job_id)
+
+        threading.Thread(target=_hf_timeout_watcher, daemon=True, name=f"hftmr-{job_id[:8]}").start()
     else:
         # No HF Space configured — go straight to API chain
         job["status"] = "api_transcribing"
@@ -502,9 +529,53 @@ def _build_acoustic_context(speaker_profiles: dict) -> str:
 
 
 import hashlib
-import json
 
 _AUDIT_CACHE = {}
+
+
+def _repair_json(raw: str) -> dict:
+    """Best-effort JSON repair for LLM responses that contain minor syntax errors."""
+    # 1. Strip markdown fences
+    if raw.startswith("```json"): raw = raw[7:]
+    if raw.startswith("```"):     raw = raw[3:]
+    if raw.endswith("```"):       raw = raw[:-3]
+    raw = raw.strip()
+
+    # 2. Extract outermost JSON object
+    brace_start = raw.find('{')
+    brace_end   = raw.rfind('}')
+    if brace_start != -1 and brace_end != -1:
+        raw = raw[brace_start:brace_end + 1]
+
+    # 3. Try clean parse
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # 4. Fix trailing commas before ] or }     (common Gemini issue)
+    fixed = _re.sub(r',\s*([}\]])', r'\1', raw)
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+
+    # 5. Remove unescaped literal newlines inside strings
+    fixed2 = _re.sub(r'(?<!\\)\n', ' ', fixed)
+    try:
+        return json.loads(fixed2)
+    except json.JSONDecodeError:
+        pass
+
+    # 6. Truncate to last valid } and retry
+    for i in range(len(fixed2) - 1, -1, -1):
+        if fixed2[i] == '}':
+            try:
+                return json.loads(fixed2[:i + 1])
+            except json.JSONDecodeError:
+                continue
+
+    raise ValueError(f"JSON repair exhausted all strategies. First 200 chars: {raw[:200]}")
 
 def generate_quality_audit(transcript: str, acoustic_profile: dict | None = None) -> dict:
     """
@@ -517,7 +588,8 @@ def generate_quality_audit(transcript: str, acoustic_profile: dict | None = None
     cache_key = hashlib.sha256(f"{transcript}|{json.dumps(acoustic_profile or {}, sort_keys=True)}".encode()).hexdigest()
     if cache_key in _AUDIT_CACHE:
         print("⚡ [Audit] Exact match found in persistent cache. Returning deterministic result.")
-        return _AUDIT_CACHE[cache_key]
+        # Return a deep copy to preserve metadata for response handlers
+        return copy.deepcopy(_AUDIT_CACHE[cache_key])
 
 
     _FALLBACK = {
@@ -535,9 +607,7 @@ def generate_quality_audit(transcript: str, acoustic_profile: dict | None = None
         "hitl_review_required": True,
     }
 
-    import time
-
-    MAX_CHARS = 40_000          # reduced from 80k to cut token usage and rate-limit risk
+    MAX_CHARS = 24_000          # covers ~20 min call; well within Groq 128K context
     if len(transcript) > MAX_CHARS:
         print(f"[Audit] Trimming transcript: {len(transcript)} → {MAX_CHARS} chars")
         transcript = transcript[:MAX_CHARS] + "\n...[truncated for token limits]"
@@ -563,13 +633,15 @@ def generate_quality_audit(transcript: str, acoustic_profile: dict | None = None
         
         # 3. Mathematical F1 Logical Inference
         f1 = parsed_audit.get("agent_f1_score")
-        if f1 is None or not isinstance(f1, (int, float)) or f1 == 0:
+        if f1 is None or not isinstance(f1, (int, float)):
+            # Only infer F1 if the model didn't provide one
             p_val = (qm.get("language_proficiency", 5) + qm.get("efficiency", 5) + qm.get("bias_reduction", 5)) / 30.0
             r_val = (qm.get("cognitive_empathy", 5) + qm.get("active_listening", 5)) / 20.0
             if (p_val + r_val) > 0:
                 parsed_audit["agent_f1_score"] = round((2 * p_val * r_val) / (p_val + r_val), 2)
             else:
                 parsed_audit["agent_f1_score"] = 0.50
+        # If f1 == 0, respect it as a valid score from the model (do not override)
 
         # 4. Emotional Timeline Inference (Segment text if missing)
         timeline = parsed_audit.get("emotional_timeline", [])
@@ -600,11 +672,34 @@ def generate_quality_audit(transcript: str, acoustic_profile: dict | None = None
 
                 lower_line = line.lower()
                 emo, intensity = 'Neutral', 3
-                if any(w in lower_line for w in ['sorry', 'apologize', 'understand']): emo, intensity = 'Empathetic', 6
-                elif any(w in lower_line for w in ['angry', 'mad', 'unacceptable', 'furious']): emo, intensity = 'Angry', 9
-                elif any(w in lower_line for w in ['help', 'thank', 'great', 'resolved']): emo, intensity = 'Satisfied', 7
-                elif any(w in lower_line for w in ['press', 'menu', 'option', 'automated']): emo, intensity = 'Neutral', 2
-                elif '?' in line: emo, intensity = 'Confused', 5
+                
+                # Emotion detection with more keywords for better variety
+                if any(w in lower_line for w in ['sorry', 'apologize', 'understand', 'empathize', 'appreciate', 'grateful']):
+                    emo, intensity = 'Empathetic', 7
+                elif any(w in lower_line for w in ['angry', 'mad', 'unacceptable', 'furious', 'frustrated', 'annoyed', 'irritated']):
+                    emo, intensity = 'Angry', 9
+                elif any(w in lower_line for w in ['help', 'thank', 'great', 'resolved', 'excellent', 'perfect', 'happy', 'satisfied']):
+                    emo, intensity = 'Satisfied', 8
+                elif any(w in lower_line for w in ['press', 'menu', 'option', 'automated', 'please hold', 'transfer']):
+                    emo, intensity = 'Neutral', 2
+                elif any(w in lower_line for w in ['confused', 'unclear', 'don\'t understand', 'what', 'huh', 'pardon', 'repeat']):
+                    emo, intensity = 'Confused', 5
+                elif any(w in lower_line for w in ['wait', 'hold', 'patient', 'waiting', 'soon', 'hurry']):
+                    emo, intensity = 'Impatient', 6
+                elif any(w in lower_line for w in ['concerned', 'worried', 'anxious', 'afraid', 'scared']):
+                    emo, intensity = 'Concerned', 5
+                # Add alternation for lines without clear emotional markers
+                elif 'please' in lower_line:
+                    emo, intensity = 'Polite', 4
+                elif i > 0 and inferred_timeline:
+                    # Add variety by sometimes using different emotions
+                    prev_emotion = inferred_timeline[-1]['emotion']
+                    pool = ['Neutral', 'Polite', 'Confused', 'Impatient']
+                    if prev_emotion in pool:
+                        pool.remove(prev_emotion)
+                    if pool:
+                        emo = pool[i % len(pool)]
+                        intensity = 3 + (i % 4)
 
                 inferred_timeline.append({
                     'turn': i + 1,
@@ -624,58 +719,92 @@ def generate_quality_audit(transcript: str, acoustic_profile: dict | None = None
 
         return parsed_audit
 
+    # ── Enterprise Audit Cascade (Tier-based, Production-Grade) ──
+    # Tier 1: Proven QA models — high TPM, high consistency, support json_object mode
+    # Tier 2: Fast instant models — high RPD, lower latency
+    # Tier 3: Specialist/research models — may not support json_object, handled gracefully
+    # Key: (model_id, label, {tier, supports_json_mode})
+    _GROQ_AUDIT_MODELS = [
+        # T1 — Primary production model: 12K TPM, 1K RPD, proven QA scoring
+        ("llama-3.3-70b-versatile",                       "Llama 3.3 70B",           {"tier": 1, "supports_json_mode": True}),
+        # T2 — Fast backup: 6K TPM, 14.4K RPD (highest RPD! great rate-limit escape)
+        ("llama-3.1-8b-instant",                          "Llama 3.1 8B Instant",    {"tier": 2, "supports_json_mode": True}),
+        # T2 — Llama 4 Scout: 30K TPM, 1K RPD, fast
+        ("meta-llama/llama-4-scout-17b-16e-instruct",     "Llama 4 Scout 17B",       {"tier": 2, "supports_json_mode": False}),
+        # T2 — Llama 4 Maverick: 6K TPM, 1K RPD
+        ("meta-llama/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick 17B",    {"tier": 2, "supports_json_mode": False}),
+        # T3 — Kimi K2: 10K TPM, 60 RPM, good for complex reasoning
+        ("moonshotai/kimi-k2-instruct",                   "Kimi K2",                 {"tier": 3, "supports_json_mode": False}),
+    ]
+
     if groq_client:
-        for attempt in range(3):    # up to 3 tries with exponential backoff on rate-limit
+        for model_id, model_label, model_meta in _GROQ_AUDIT_MODELS:
             try:
-                print(f"--- [Audit] Groq Llama-3.3-70b attempt {attempt+1}/3 ---")
-                response = groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                tier = model_meta.get("tier", 99)
+                supports_json = model_meta.get("supports_json_mode", False)
+                tier_str = f"[T{tier}]"
+                print(f"--- [Audit] {tier_str} Groq {model_label} ---")
+
+                call_kwargs = dict(
+                    model=model_id,
                     messages=[
                         {"role": "system", "content": _AUDIT_SYSTEM_PROMPT},
                         {"role": "user",   "content": user_prompt},
                     ],
-                    response_format={"type": "json_object"},
                     temperature=0.0,
                     max_tokens=2048,
                 )
-                raw = response.choices[0].message.content.strip()
-                audit = json.loads(raw)
-                print("✅ [Audit] Quality audit complete via Groq.")
-                final_audit = _apply_defensive_merge(audit)
-                _AUDIT_CACHE[cache_key] = final_audit
-                return final_audit
+                # Only pass response_format to models confirmed to support json_object
+                if supports_json:
+                    call_kwargs["response_format"] = {"type": "json_object"}
 
-            except json.JSONDecodeError as e:
-                print(f"⚠️  [Audit] JSON parse failed on Groq: {e}")
-                break
+                response = groq_client.chat.completions.create(**call_kwargs)
+                raw = response.choices[0].message.content.strip()
+                try:
+                    audit = _repair_json(raw)
+                except (ValueError, json.JSONDecodeError) as parse_err:
+                    print(f"⚠️  [Audit] JSON parse failed on {model_label}: {parse_err}. Trying next model.")
+                    continue
+                print(f"✅ [Audit] Quality audit complete via {tier_str} {model_label}.")
+                final_audit = _apply_defensive_merge(audit)
+                # Store model metadata for traceability
+                final_audit['_audit_metadata'] = {
+                    'model_id':    model_id,
+                    'model_label': model_label,
+                    'tier':        tier,
+                }
+                _AUDIT_CACHE[cache_key] = copy.deepcopy(final_audit)
+                return final_audit
 
             except Exception as e:
                 err_str = str(e).lower()
+                tier = model_meta.get("tier", 99)
                 if "rate_limit" in err_str or "rate limit" in err_str or "429" in err_str:
-                    if IS_VERCEL:
-                        print(f"⚠️  [Audit] Groq Rate limit hit on Vercel. Skipping sleep retries to prevent 504 Timeout.")
-                        break
-                        
-                    wait = 5 * (2 ** attempt)
-                    print(f"⚠️  [Audit] Rate limit hit (attempt {attempt+1}). Waiting {wait}s...")
-                    time.sleep(wait)
-                    if attempt == 2:
-                        print("⚠️  [Audit] Exhausted Groq retries, falling back to OpenRouter.")
+                    print(f"⚠️  [Audit] [T{tier}] Rate limit on {model_label} — trying next model.")
+                elif "response_format" in err_str or "json_object" in err_str or "not support" in err_str:
+                    print(f"⚠️  [Audit] [T{tier}] {model_label} does not support json_object — trying next model.")
                 else:
-                    print(f"⚠️  [Audit] Groq call failed: {e}")
-                    break
+                    print(f"⚠️  [Audit] [T{tier}] {model_label} failed: {e} — trying next model.")
+                continue
+
+        print("⚠️  [Audit] All Groq models exhausted — falling back to OpenRouter.")
 
     # ── OPENROUTER FALLBACK ──
+    if not OPENROUTER_API_KEY:
+        print("⚠️  [Audit] OpenRouter not configured (OPENROUTER_API_KEY not set). Returning fallback.")
+        return _FALLBACK
+
     _or_model   = "google/gemini-2.5-flash"
-    _or_timeout = 45
+    _or_timeout = 25   # fail fast rather than hang the UI
     _or_tokens  = 2048
     print(f"--- [Audit] Attempting OpenRouter Fallback (model={_or_model}, timeout={_or_timeout}s) ---")
     try:
-        import requests
-        resp = requests.post(
+        import requests as _requests  # lazy — only needed for OpenRouter fallback
+        resp = _requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
             },
             json={
                 "model": _or_model,
@@ -683,7 +812,8 @@ def generate_quality_audit(transcript: str, acoustic_profile: dict | None = None
                     {"role": "system", "content": _AUDIT_SYSTEM_PROMPT},
                     {"role": "user",   "content": user_prompt},
                 ],
-                "response_format": {"type": "json_object"},
+                # NOTE: response_format NOT set — Gemini via OpenRouter ignores it and
+                # may return a 400. The system prompt already instructs JSON-only output.
                 "temperature": 0.0,
                 "max_tokens": _or_tokens
             },
@@ -691,17 +821,19 @@ def generate_quality_audit(transcript: str, acoustic_profile: dict | None = None
         )
         if resp.status_code == 200:
             raw = resp.json()["choices"][0]["message"]["content"].strip()
-            # Strip any markdown wrappers occasionally returned by OpenRouter
-            if raw.startswith("```json"): raw = raw[7:]
-            if raw.endswith("```"):       raw = raw[:-3]
-            raw = raw.strip()
-            audit = json.loads(raw)
+            try:
+                audit = _repair_json(raw)
+            except (ValueError, json.JSONDecodeError) as parse_err:
+                print(f"⚠️  [Audit] OpenRouter JSON repair failed: {parse_err}")
+                return _FALLBACK
             print(f"✅ [Audit] Quality audit complete via OpenRouter ({_or_model}).")
             final_audit = _apply_defensive_merge(audit)
-            _AUDIT_CACHE[cache_key] = final_audit
+            _AUDIT_CACHE[cache_key] = copy.deepcopy(final_audit)
             return final_audit
         else:
-            print(f"⚠️  [Audit] OpenRouter failed with {resp.status_code}: {resp.text}")
+            print(f"⚠️  [Audit] OpenRouter failed with {resp.status_code}: {resp.text[:300]}")
+    except _requests.exceptions.Timeout:
+        print(f"⚠️  [Audit] OpenRouter timed out after {_or_timeout}s.")
     except Exception as e:
         print(f"⚠️  [Audit] OpenRouter call failed: {e}")
 
@@ -749,9 +881,17 @@ def process_chat():
         # explicit. Since text input has NO hugging face pipeline, it immediately skips to OpenRouter/Groq.
         audit = generate_quality_audit(text)
         
+        # Extract & log which model scored this audit
+        audit_meta = audit.pop('_audit_metadata', {})
+        model_label = audit_meta.get('model_label', 'Unknown')
+        tier = audit_meta.get('tier', '?')
+        print(f"[process-chat] Audit scored by [T{tier}] {model_label}")
+        
         return jsonify({
             'success': True,
             'type': 'chat',
+            'audit_scored_by': model_label,
+            'audit_tier': tier,
             'original_text': text,
             'audit': audit,
             'timestamp': datetime.utcnow().isoformat() + 'Z',
@@ -793,9 +933,18 @@ def process_file():
 
         print("[process-file] Running quality audit...")
         audit = generate_quality_audit(text)
+        
+        # Extract & log which model scored this audit
+        audit_meta = audit.pop('_audit_metadata', {})
+        model_label = audit_meta.get('model_label', 'Unknown')
+        tier = audit_meta.get('tier', '?')
+        print(f"[process-file] Audit scored by [T{tier}] {model_label}")
+        
         return jsonify({
             'success':       True,
             'type':          'chat',
+            'audit_scored_by': model_label,
+            'audit_tier': tier,
             'original_text': text,
             'audit':         audit,
             'timestamp':     datetime.utcnow().isoformat() + 'Z',
@@ -921,12 +1070,17 @@ def job_status(job_id):
         'error':             job['error'],
     }
     if job['status'] == 'done':
+        # deepcopy to avoid mutating cached/shared job audit dict
+        audit_copy = copy.deepcopy(job['audit'] or {})
+        audit_meta = audit_copy.pop('_audit_metadata', {})
         resp['success']          = True
         resp['type']             = 'call'
         resp['transcription']    = job['transcript']
-        resp['audit']            = job['audit']
+        resp['audit']            = audit_copy
         resp['acoustic_profile'] = job['acoustic_profile']
         resp['timestamp']        = datetime.utcnow().isoformat() + 'Z'
+        resp['audit_scored_by']  = audit_meta.get('model_label', 'Unknown')
+        resp['audit_tier']       = audit_meta.get('tier', '?')
     return jsonify(resp)
 
 

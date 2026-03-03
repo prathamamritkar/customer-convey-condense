@@ -428,7 +428,12 @@ async function pollJobStatus(jobId) {
             } else if (res.status === 'error') {
                 throw new Error(res.error || 'Unknown job failure');
             } else {
-                UI.loaderText.textContent = 'Analyzing interaction...';
+                const statusMap = {
+                    'hf_transcribing': 'HF Space transcribing...',
+                    'api_transcribing': 'API chain transcribing...',
+                    'auditing': 'AI auditing interaction...',
+                };
+                UI.loaderText.textContent = statusMap[res.status] || 'Processing...';
                 if (UI.statusText) {
                     UI.statusText.textContent = `[Job ${jobId.substring(0, 6)}] ${res.status.replace(/_/g, ' ')}`;
                 }
