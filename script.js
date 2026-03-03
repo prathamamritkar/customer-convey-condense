@@ -178,7 +178,7 @@ function handleChatFile(file) {
     UI.chat.dropzone.hidden = true;
     UI.chat.chip.hidden = false;
     UI.chat.input.disabled = true;
-    UI.chat.input.placeholder = "Document loaded. Ready to audit.";
+    UI.chat.input.placeholder = 'Document loaded — ready to audit.';
     syncInteractiveState();
 }
 
@@ -188,7 +188,7 @@ function resetChatInput() {
     UI.chat.dropzone.hidden = false;
     UI.chat.chip.hidden = true;
     UI.chat.input.disabled = false;
-    UI.chat.input.placeholder = "Or paste chat transcript directly here...";
+    UI.chat.input.placeholder = 'Paste chat log, support transcript, email thread, or any interaction text here...';
     syncInteractiveState();
 }
 
@@ -206,6 +206,10 @@ function handleAudioFile(file) {
     UI.audio.fileName.textContent = file.name;
     UI.audio.dropzone.hidden = true;
     UI.audio.chip.hidden = false;
+    // Disable mic button while a file is loaded — mirrors chat textarea disable behaviour
+    UI.audio.micBtn.disabled = true;
+    UI.audio.micBtn.style.opacity = '0.4';
+    UI.audio.micBtn.style.pointerEvents = 'none';
     syncInteractiveState();
 }
 
@@ -214,6 +218,10 @@ function resetAudioInput() {
     UI.audio.fileInput.value = '';
     UI.audio.dropzone.hidden = false;
     UI.audio.chip.hidden = true;
+    // Re-enable mic button
+    UI.audio.micBtn.disabled = false;
+    UI.audio.micBtn.style.opacity = '';
+    UI.audio.micBtn.style.pointerEvents = '';
     syncInteractiveState();
 }
 

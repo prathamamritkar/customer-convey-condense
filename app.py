@@ -423,12 +423,23 @@ def _start_job(audio_filepath: str) -> dict:
 _AUDIT_SYSTEM_PROMPT = """You are an Expert Customer Support Quality Auditor, applied Psychologist, and rigorous Data Scientist.
 You receive a customer support transcript (voice or chat) and must return ONLY a valid JSON object — no markdown, no explanation, JSON only.
 
-You MUST optimize every analytic for the absolute highest mathematical correctness and exact precision. 
+You MUST optimize every analytic for the absolute highest mathematical correctness and exact precision.
 Your output MUST be entirely deterministic based strictly on the data provided, ensuring correct evaluation for all data inputs.
+
+SPEAKER ROLE INFERENCE (apply before scoring):
+Every interaction has exactly two sides: the AGENT side (the company/support) and the CUSTOMER side (the client/caller).
+Each side may be staffed by a human, a bot, an IVR system, or a combination — but always map to Agent or Customer.
+- AGENT side: initiates greetings, offers solutions, references policies, stays professional. Includes human reps, chatbots, and IVR systems representing the company.
+- CUSTOMER side: describes a problem, asks for help, expresses frustration, references personal account/order. Includes humans and occasionally automated systems placing service requests.
+Generic labels (SPEAKER_00, Speaker 0, spk_1, etc.) MUST be resolved to Agent or Customer using context. Once identified, apply consistently for all turns of that speaker.
 
 JSON schema (all fields required):
 {
   "summary": "<one-sentence plain-English summary of the interaction and its outcome>",
+  "interaction_type": {
+    "agent_channel": "<Human|Bot|IVR|Hybrid>",
+    "customer_channel": "<Human|Bot>"
+  },
   "agent_f1_score": <float 0.0–1.0, harmonic mean of precision and recall of agent helpfulness>,
   "satisfaction_prediction": "<High|Medium|Low>",
   "compliance_risk": "<Green|Amber|Red>",
@@ -443,19 +454,17 @@ JSON schema (all fields required):
     {"turn": <int>, "speaker": "<Agent|Customer>", "emotion": "<Frustrated|Angry|Neutral|Confused|Relieved|Satisfied|Happy|Anxious|Professional|Empathetic|Calm>", "intensity": <int 1–10>}
   ],
   "compliance_flags": ["<specific violation or concern, if any>"],
-  "behavioral_nudges": ["<specific, psychologically-grounded coaching tip for the agent>"],
+  "behavioral_nudges": ["<specific, psychologically-grounded coaching tip — only applicable to the human agent if present>"],
   "hitl_review_required": <true|false>
 }
 
 Scoring guide:
-- agent_f1_score: Calculate the mathematically optimized F1 score (harmonic mean of precision and recall) for agent helpfulness. 
-  Precision = exactly what proportion of agent statements were factually correct/helpful. 
-  Recall = exactly what proportion of customer pain points were fully addressed.
-  You MUST return the mathematically highest justifiable F1 score based purely on correct, objective data analysis.
+- interaction_type: Hybrid means both human and bot/IVR participated on the agent side.
+- agent_f1_score: harmonic mean of precision (correct/helpful statements) and recall (customer pain points addressed). Score the effective agent performance regardless of human or bot.
 - compliance_risk: Green = no issues, Amber = minor deviations, Red = serious breach
-- hitl_review_required: true if score is ambiguous or compliance_risk is Red
-- emotional_timeline: include every speaker turn. Map turns sequentially (turn 1, 2, 3...).
-- behavioral_nudges: 2–4 specific tips. Ground them in psychology (e.g. reflective listening, cognitive reframing).
+- hitl_review_required: true if compliance_risk is Red, or if the interaction was fully bot-handled with no human escalation and the issue was unresolved.
+- emotional_timeline: include every speaker turn (Agent or Customer). Map turns sequentially (turn 1, 2, 3...).
+- behavioral_nudges: 2–4 tips grounded in psychology. If agent_channel is Bot or IVR, focus nudges on system design recommendations rather than interpersonal coaching.
 - compliance_flags: empty array [] if none found."""
 
 def _build_acoustic_context(speaker_profiles: dict) -> str:
@@ -564,25 +573,43 @@ def generate_quality_audit(transcript: str, acoustic_profile: dict | None = None
         if not timeline or not isinstance(timeline, list) or len(timeline) == 0:
             inferred_timeline = []
             lines = [line.strip() for line in transcript.split('\n') if len(line.strip()) > 2]
-            # Simple heuristic mapping for unstructured text blocks
-            for i, line in enumerate(lines[:50]): # Cap at 50 to avoid massive unmapped charts
+
+            # Role keywords — Bot/IVR always map to Agent side (they represent the company)
+            _BOT_LABELS      = {'bot', 'ivr', 'system', 'automated', 'ai', 'virtual', 'chatbot', 'assistant'}
+            _AGENT_LABELS    = {'agent', 'rep', 'representative', 'support', 'advisor', 'operator', 'staff', 'specialist'}
+            _CUSTOMER_LABELS = {'customer', 'client', 'user', 'caller', 'member', 'patient', 'guest'}
+
+            def _infer_role(label: str) -> str:
+                l = label.lower().strip()
+                if any(k in l for k in _BOT_LABELS):      return 'Agent'   # company-side bot/IVR → Agent
+                if any(k in l for k in _AGENT_LABELS):    return 'Agent'
+                if any(k in l for k in _CUSTOMER_LABELS): return 'Customer'
+                return None  # fallback to alternation for generic labels (SPEAKER_00 etc.)
+
+            for i, line in enumerate(lines[:50]):
                 speaker_match = re.match(r'^([^:]+):', line)
-                spk = speaker_match.group(1).strip() if speaker_match else ("Agent" if i % 2 == 0 else "Customer")
-                # Deduce basic heuristic emotion from keywords, default to Neutral
-                emo, intensity = "Neutral", 3
+                if speaker_match:
+                    raw_label = speaker_match.group(1).strip()
+                    role = _infer_role(raw_label)
+                    spk = role if role else raw_label[:20]
+                else:
+                    spk = 'Agent' if i % 2 == 0 else 'Customer'
+
                 lower_line = line.lower()
-                if any(w in lower_line for w in ['sorry', 'apologize', 'understand']): emo, intensity = "Empathetic", 6
-                elif any(w in lower_line for w in ['angry', 'mad', 'unacceptable']): emo, intensity = "Angry", 9
-                elif any(w in lower_line for w in ['help', 'thank', 'great']): emo, intensity = "Satisfied", 7
-                elif '?' in line: emo, intensity = "Confused", 5
-                
+                emo, intensity = 'Neutral', 3
+                if any(w in lower_line for w in ['sorry', 'apologize', 'understand']): emo, intensity = 'Empathetic', 6
+                elif any(w in lower_line for w in ['angry', 'mad', 'unacceptable', 'furious']): emo, intensity = 'Angry', 9
+                elif any(w in lower_line for w in ['help', 'thank', 'great', 'resolved']): emo, intensity = 'Satisfied', 7
+                elif any(w in lower_line for w in ['press', 'menu', 'option', 'automated']): emo, intensity = 'Neutral', 2
+                elif '?' in line: emo, intensity = 'Confused', 5
+
                 inferred_timeline.append({
-                    "turn": i + 1,
-                    "speaker": spk[:20],  # cap speaker name
-                    "emotion": emo,
-                    "intensity": intensity
+                    'turn': i + 1,
+                    'speaker': spk,
+                    'emotion': emo,
+                    'intensity': intensity
                 })
-            parsed_audit["emotional_timeline"] = inferred_timeline
+            parsed_audit['emotional_timeline'] = inferred_timeline
 
         # 5. Fallback nudges
         nudges = parsed_audit.get("behavioral_nudges", [])
@@ -632,7 +659,12 @@ def generate_quality_audit(transcript: str, acoustic_profile: dict | None = None
                     break
 
     # ── OPENROUTER FALLBACK ──
-    print("--- [Audit] Attempting OpenRouter Fallback ---")
+    # On Vercel (10s hard limit): use gpt-4o-mini (fastest small LLM) with 8s timeout.
+    # Locally: use Gemini Flash with full 45s timeout for best quality.
+    _or_model   = "openai/gpt-4o-mini"        if IS_VERCEL else "google/gemini-2.5-flash"
+    _or_timeout = 8                             if IS_VERCEL else 45
+    _or_tokens  = 1024                          if IS_VERCEL else 2048
+    print(f"--- [Audit] Attempting OpenRouter Fallback (model={_or_model}, timeout={_or_timeout}s) ---")
     try:
         import requests
         resp = requests.post(
@@ -641,27 +673,25 @@ def generate_quality_audit(transcript: str, acoustic_profile: dict | None = None
                 "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             },
             json={
-                "model": "google/gemini-2.5-flash",
+                "model": _or_model,
                 "messages": [
                     {"role": "system", "content": _AUDIT_SYSTEM_PROMPT},
                     {"role": "user",   "content": user_prompt},
                 ],
                 "response_format": {"type": "json_object"},
                 "temperature": 0.0,
-                "max_tokens": 2048
+                "max_tokens": _or_tokens
             },
-            timeout=45
+            timeout=_or_timeout
         )
         if resp.status_code == 200:
             raw = resp.json()["choices"][0]["message"]["content"].strip()
-            # Handle potential markdown wrappers sometimes returned by OpenRouter
-            if raw.startswith("```json"):
-                raw = raw[7:]
-            if raw.endswith("```"):
-                raw = raw[:-3]
+            # Strip any markdown wrappers occasionally returned by OpenRouter
+            if raw.startswith("```json"): raw = raw[7:]
+            if raw.endswith("```"):       raw = raw[:-3]
             raw = raw.strip()
             audit = json.loads(raw)
-            print("✅ [Audit] Quality audit complete via OpenRouter.")
+            print(f"✅ [Audit] Quality audit complete via OpenRouter ({_or_model}).")
             final_audit = _apply_defensive_merge(audit)
             _AUDIT_CACHE[cache_key] = final_audit
             return final_audit

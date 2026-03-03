@@ -414,7 +414,7 @@ body {
 
 /* ── File Chip ───────────────────────────────────────────────────────── */
 .file-chip {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: var(--s2);
     background: var(--md-primary-container);
@@ -423,6 +423,7 @@ body {
     padding: var(--s2) var(--s3);
     font-size: 0.82rem;
     color: var(--md-primary-light);
+    max-width: 100%;
 }
 
 .file-chip .material-symbols-rounded {
@@ -430,7 +431,6 @@ body {
 }
 
 .file-name {
-    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
