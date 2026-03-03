@@ -88,20 +88,20 @@ sequenceDiagram
         API->>HF: Stream audio via gradio_client
         HF->>HF: faster-whisper + pyannote + speechbrain
         HF-->>API: transcript + acoustic_profile
-    and Thread B: API Chain
+    and Thread B: API Fallback Chain
         API->>Ext: ElevenLabs Scribe
-        Ext-->>API: transcript (or exception)
-        alt Scribe failed
-            API->>Ext: Deepgram Nova-2
-            Ext-->>API: transcript (or exception)
-            alt Deepgram failed
-                API->>Ext: Groq Whisper-large-v3
-                Ext-->>API: transcript
-            end
-        end
+        Ext-->>API: transcript
     end
     
-    Note over API: First successful thread wins; other abandoned
+    Note over API,Ext: First successful thread wins; others abandoned
+    alt ElevenLabs failed
+        API->>Ext: Deepgram Nova-2
+        Ext-->>API: transcript
+    end
+    alt Deepgram failed
+        API->>Ext: Groq Whisper-large-v3
+        Ext-->>API: transcript
+    end
     
     UI->>API: GET /api/job/&lt;job_id&gt;/status
     API-->>UI: { status, source, transcript, ... }
